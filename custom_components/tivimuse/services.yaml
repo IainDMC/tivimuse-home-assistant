@@ -1,0 +1,28 @@
+play_channel:
+  target:
+    entity:
+      integration: tivimuse
+      domain: media_player
+  fields:
+    channel_id:
+      required: true
+      selector:
+        text:
+seek_relative:
+  target:
+    entity:
+      integration: tivimuse
+      domain: media_player
+  fields:
+    seconds:
+      required: true
+      selector:
+        number:
+          min: -86400
+          max: 86400
+          mode: box
+jump_live:
+  target:
+    entity:
+      integration: tivimuse
+      domain: media_player

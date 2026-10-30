@@ -1,0 +1,59 @@
+{
+  "title": "TiviMuse",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to TiviMuse",
+        "description": "Enable local control in TiviMuse Settings → Home Assistant, then enter its address, port and pairing key. Keep TiviMuse open while pairing.",
+        "data": {
+          "host": "Device hostname or IP address",
+          "port": "Local API port",
+          "token": "Pairing key"
+        }
+      },
+      "reconfigure": {
+        "title": "Update TiviMuse connection",
+        "data": {
+          "host": "Device hostname or IP address",
+          "port": "Local API port",
+          "token": "Pairing key"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Pairing key rejected.",
+      "cannot_connect": "Cannot connect. Keep TiviMuse open and check its address, port and local control setting.",
+      "wrong_device": "This is a different TiviMuse installation."
+    },
+    "abort": {
+      "already_configured": "This installation is already configured.",
+      "reconfigure_successful": "Connection updated."
+    }
+  },
+  "services": {
+    "play_channel": {
+      "name": "Play channel",
+      "description": "Play one exact channel from its installed app and playlist.",
+      "fields": {
+        "channel_id": {
+          "name": "Channel ID",
+          "description": "Use the media browser or current channel_id attribute."
+        }
+      }
+    },
+    "seek_relative": {
+      "name": "Seek relative",
+      "description": "Seek within the available timeshift window.",
+      "fields": {
+        "seconds": {
+          "name": "Seconds",
+          "description": "Negative rewinds; positive skips forward."
+        }
+      }
+    },
+    "jump_live": {
+      "name": "Jump to live",
+      "description": "Return to normal live playback."
+    }
+  }
+}
