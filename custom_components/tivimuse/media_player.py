@@ -20,6 +20,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .api import TiviMuseError
+from .artwork import fit_logo
 from .const import DOMAIN
 
 
@@ -183,7 +184,8 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
         if not self.media_image_url:
             return None
         try:
-            return await self.coordinator.client.logo(self.media_content_id)
+            data, _ = await self.coordinator.client.logo(self.media_content_id)
+            return await self.hass.async_add_executor_job(fit_logo, data)
         except TiviMuseError:
             return None
 
@@ -195,7 +197,8 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
         ):
             return None
         try:
-            return await self.coordinator.client.logo(media_image_id)
+            data, _ = await self.coordinator.client.logo(media_image_id)
+            return await self.hass.async_add_executor_job(fit_logo, data)
         except TiviMuseError:
             return None
 
