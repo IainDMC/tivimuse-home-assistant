@@ -35,7 +35,7 @@ Standard volume and device power stay with your Shield/Android TV integration. T
 
 Every playable channel has a device- and playlist-scoped ID based on the provider stream reference. Names, channel numbers, playlist titles, order and internal channel-row IDs are not used for selection.
 
-Two channels named **ABC TV** in different playlists have different IDs. A rename, reorder, normal catalogue refresh or APK update leaves the same channel reference unchanged. Removing and re-adding a playlist creates a new playlist identity. Clearing app data creates a new device identity. If a referenced channel is unavailable, the action fails: it never silently falls back to a similarly named channel.
+Two channels named in different playlists have different IDs. A rename, reorder, normal catalogue refresh or APK update leaves the same channel reference unchanged. Removing and re-adding a playlist creates a new playlist identity. Clearing app data creates a new device identity. If a referenced channel is unavailable, the action fails: it never silently falls back to a similarly named channel.
 
 Choose a channel from the media browser, then copy the media player's `channel_id` attribute for an automation. IDs are machine references; do not construct them from a display label.
 
@@ -61,7 +61,7 @@ Use `tivimuse.jump_live` with the same entity target to return to live. During l
 
 ## Existing Remote3 webhook
 
-The existing Remote3/TiviMate Observer-compatible webhook reporter can remain enabled. This integration uses a separate local pairing key and does not replace or expose the webhook. It does not require the accessibility observer.
+The existing Remote3 Observer-compatible webhook reporter can remain enabled. This integration uses a separate local pairing key and does not replace or expose the webhook. It does not require the accessibility observer.
 
 ## Validation and limitations
 
