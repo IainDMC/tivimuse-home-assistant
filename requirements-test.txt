@@ -1,3 +1,4 @@
 aiohttp
+Pillow
 pytest-homeassistant-custom-component
 ruff
