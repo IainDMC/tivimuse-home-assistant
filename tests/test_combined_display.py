@@ -584,29 +584,40 @@ async def test_programme_progress_is_available_without_seekable_stream(hass, com
 
 
 @pytest.mark.parametrize("app", ["app.opentv.debug", "com.nuvio.app", "org.smarttube.stable"])
-async def test_closing_app_clears_even_configured_fallback_artwork(hass, combined, app):
+async def test_closing_app_replaces_artwork_with_new_app_or_shield_fallback(hass, combined, app):
     _, player = combined
     player.options = {
         **player.options,
-        "fallback_logo": "/local/fallback.png",
-        "app_logos": {"launcher": "/local/launcher.png"},
+        "fallback_logo": "/local/icons/tv.png",
+        "app_logos": {"launcher": "/local/launcher.png", "other.app": "/local/other.png"},
     }
     player.refresh_artwork()
     foreground(hass, app)
     await hass.async_block_till_done()
-    assert hass.states.get(DISPLAY).attributes["entity_picture"] == "/local/fallback.png"
-    for identity, state in [("launcher", "playing"), (app, "off"), (app, "unavailable")]:
+    for identity, state, expected in [
+        ("launcher", "playing", "/local/launcher.png"),
+        ("other.app", "playing", "/local/other.png"),
+        ("unmapped.app", "playing", "/local/icons/tv.png"),
+        (app, "off", "/local/icons/tv.png"),
+        (app, "unavailable", "/local/icons/tv.png"),
+    ]:
         foreground(hass, identity, state)
         await hass.async_block_till_done()
-        assert hass.states.get(DISPLAY).attributes["entity_picture"] == ""
-        assert await player.async_get_media_image() == (None, None)
+        attributes = hass.states.get(DISPLAY).attributes
+        assert attributes["entity_picture"] == expected
+        assert attributes["media_title"] == ""
+        assert attributes["media_position"] == 0
 
 
-async def test_disconnected_tivimuse_clears_app_logo_before_foreground_catches_up(hass, combined):
+async def test_disconnected_tivimuse_uses_shield_before_foreground_catches_up(hass, combined):
     entry, player = combined
-    player.options = {**player.options, "tivimuse_logo": "/local/tivimuse.png"}
+    player.options = {
+        **player.options,
+        "tivimuse_logo": "/local/tivimuse.png",
+        "fallback_logo": "/local/icons/tv.png",
+    }
     player.refresh_artwork()
     assert hass.states.get(DISPLAY).attributes["entity_picture"] == "/local/tivimuse.png"
     entry.runtime_data.coordinator.async_set_update_error(DeviceUnavailable("closed"))
     await hass.async_block_till_done()
-    assert hass.states.get(DISPLAY).attributes["entity_picture"] == ""
+    assert hass.states.get(DISPLAY).attributes["entity_picture"] == "/local/icons/tv.png"

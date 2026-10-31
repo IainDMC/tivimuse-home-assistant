@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.3
+
+- Restore original foreground app-icon replacement, including launcher and other app mappings. Use the configured fallback (NVIDIA Shield on this installation) when no app icon exists, instead of an empty URL ignored by older Remote 3 drivers.
+
 ## 0.5.2
 
 - Clear artwork when a media app closes, including configured fallback/launcher logos, off/unavailable foreground states and a disconnected TiviMuse session.
