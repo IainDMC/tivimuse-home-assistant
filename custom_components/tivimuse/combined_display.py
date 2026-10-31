@@ -292,15 +292,24 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     @property
     def supported_features(self):
+        # Remote 3's installed HA driver 0.17.0 only declares duration/position
+        # when SEEK is declared at discovery time. Keep that display contract
+        # stable, as the original facade did; commands still validate whether
+        # the current stream can actually seek. Native HA capabilities stay exact.
+        progress_compat = MediaPlayerEntityFeature.SEEK
         if not self.available:
             return MediaPlayerEntityFeature(0)
         if self._kind == "tivimuse":
             source = self.hass.states.get(self._source_id)
-            return self.native.supported_features | (
-                MediaPlayerEntityFeature(source.attributes.get("supported_features", 0))
-                & DEVICE_CONTROLS
-                if source
-                else 0
+            return (
+                progress_compat
+                | self.native.supported_features
+                | (
+                    MediaPlayerEntityFeature(source.attributes.get("supported_features", 0))
+                    & DEVICE_CONTROLS
+                    if source
+                    else 0
+                )
             )
         source = self.hass.states.get(self._source_id)
         device = (
@@ -310,8 +319,10 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
             else 0
         )
         return (
-            MediaPlayerEntityFeature(self._attribute("supported_features") or 0) & FORWARDED
-        ) | device
+            progress_compat
+            | (MediaPlayerEntityFeature(self._attribute("supported_features") or 0) & FORWARDED)
+            | device
+        )
 
     @property
     def extra_state_attributes(self):
@@ -619,6 +630,8 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         if self._art_key == self._artwork_key() and self._art_image:
             return self._art_image
         url = self.media_image_url
+        if not url:
+            return None, None
         if url and url.startswith("/"):
             try:
                 url = urljoin(get_url(self.hass, allow_external=False), url)

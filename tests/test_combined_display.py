@@ -5,7 +5,9 @@ from io import BytesIO
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from homeassistant.components.media_player import MediaPlayerEntityFeature
 from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from PIL import Image
@@ -556,3 +558,26 @@ async def test_original_json_settings_validate_and_persist(hass):
     assert result["type"] == "create_entry"
     assert entry.options["app_names"] == {"org.smarttube.stable": "YouTube"}
     assert entry.options["app_artwork_profiles"]["smarttube"] == ["app_logo", "source_artwork"]
+
+
+async def test_programme_progress_is_available_without_seekable_stream(hass, combined):
+    entry, player = combined
+    now = dt_util.parse_datetime("2026-11-01T10:20:00Z")
+    start = now.timestamp() * 1000 - 1200000
+    with patch("custom_components.tivimuse.combined_display.dt_util.utcnow", return_value=now):
+        entry.runtime_data.coordinator.async_set_updated_data(
+            {
+                **NATIVE,
+                "can_seek": False,
+                "programme": {"title": "Programme", "start_ms": start, "end_ms": start + 3600000},
+            }
+        )
+        assert player.supported_features & MediaPlayerEntityFeature.SEEK
+        assert hass.states.get(DISPLAY).attributes["media_duration"] == 3600
+        assert hass.states.get(DISPLAY).attributes["media_position"] == 1200
+        with patch.object(
+            entry.runtime_data.coordinator.client, "command", new_callable=AsyncMock
+        ) as command:
+            with pytest.raises(HomeAssistantError, match="cannot seek"):
+                await player.async_media_seek(600)
+            command.assert_not_awaited()
