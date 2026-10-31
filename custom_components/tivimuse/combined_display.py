@@ -375,6 +375,10 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         )
 
     def _app_logo(self):
+        # A launcher or unavailable foreground is not a media app. Do not let
+        # a configured fallback keep artwork on the remote after closing it.
+        if self._kind is None:
+            return None
         logos = self.options.get("app_logos", {})
         return (
             logos.get(self.app_name)
@@ -602,7 +606,11 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     @property
     def media_image_url(self):
+        if self._kind is None:
+            return None
         if self._kind == "tivimuse":
+            if not self.native.available or self.native.state not in ACTIVE:
+                return None
             if self._native_art_image and self._native_art_key == self._native_image_key():
                 digest = hashlib.sha256(repr(self._native_art_key).encode()).hexdigest()[:16]
                 return f"tivimuse://display/native/{digest}/{self._image_revision}"

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2
+
+- Clear artwork when a media app closes, including configured fallback/launcher logos, off/unavailable foreground states and a disconnected TiviMuse session.
+
 ## 0.5.1
 
 - Give wide channel logos 20% more horizontal room while preserving the selected height limit, aspect ratio and safe margins. Tall logos retain their existing size.
