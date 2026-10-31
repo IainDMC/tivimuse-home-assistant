@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from time import monotonic
 
 import voluptuous as vol
 from homeassistant.components.media_player import (
@@ -48,6 +50,10 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
 
     def __init__(self, coordinator):
         super().__init__(coordinator)
+        self._logo_lock = asyncio.Lock()
+        self._logo_cache = None
+        self._logo_cache_key = None
+        self._logo_cached_at = 0.0
         device_id = coordinator.info["device_id"]
         self._attr_unique_id = device_id
         self._attr_device_info = {
@@ -79,8 +85,16 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
         }.get(self.coordinator.data.get("state"), MediaPlayerState.IDLE)
 
     @property
+    def _display_data(self):
+        """Do not leave the previous programme on a stopped or disconnected display."""
+        data = self.coordinator.data
+        if not self.available or data.get("state") not in ("playing", "paused", "buffering"):
+            return {}
+        return data
+
+    @property
     def media_content_id(self):
-        return self.coordinator.data.get("channel_id")
+        return self._display_data.get("channel_id")
 
     @property
     def media_content_type(self):
@@ -88,19 +102,28 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def media_channel(self):
-        return self.coordinator.data.get("channel")
+        return self._display_data.get("channel")
 
     @property
     def media_playlist(self):
-        return self.coordinator.data.get("playlist")
+        return self._display_data.get("playlist")
 
     @property
     def media_title(self):
-        return (self.coordinator.data.get("programme") or {}).get("title") or self.media_channel
+        return (self._display_data.get("programme") or {}).get("title") or self.media_channel
+
+    @property
+    def media_artist(self):
+        """Remote 3 uses the standard artist field for the channel subtitle."""
+        return self.media_channel
+
+    @property
+    def media_album_name(self):
+        return self.media_playlist
 
     @property
     def media_duration(self):
-        data = self.coordinator.data
+        data = self._display_data
         if data.get("mode") == "live":
             programme = data.get("programme") or {}
             return (
@@ -113,7 +136,7 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def media_position(self):
-        data = self.coordinator.data
+        data = self._display_data
         if data.get("mode") == "live":
             programme = data.get("programme") or {}
             at = self.media_position_updated_at
@@ -127,7 +150,7 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def media_position_updated_at(self):
-        value = self.coordinator.data.get("position_updated_at")
+        value = self._display_data.get("position_updated_at")
         return dt_util.parse_datetime(value) if value else None
 
     @property
@@ -140,7 +163,7 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def extra_state_attributes(self):
-        data = self.coordinator.data
+        data = self._display_data
         return {
             "playback_state": data.get("state"),
             "channel_id": data.get("channel_id"),
@@ -181,13 +204,25 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
         await self.async_play_channel(media_id)
 
     async def async_get_media_image(self, width=None, height=None):
-        if not self.media_image_url:
-            return None
-        try:
-            data, _ = await self.coordinator.client.logo(self.media_content_id)
-            return await self.hass.async_add_executor_job(fit_logo, data)
-        except TiviMuseError:
-            return None
+        async with self._logo_lock:
+            key = self.media_image_url
+            if not key:
+                self._logo_cache_key = self._logo_cache = None
+                return None, None
+            if key == self._logo_cache_key and monotonic() - self._logo_cached_at < 300:
+                return self._logo_cache
+            try:
+                data, _ = await self.coordinator.client.logo(self.media_content_id)
+                image = await self.hass.async_add_executor_job(fit_logo, data)
+            except TiviMuseError:
+                return None, None
+            # An old request must never become the new channel's artwork.
+            if key != self.media_image_url:
+                return None, None
+            if image is not None:
+                self._logo_cache_key, self._logo_cache = key, image
+                self._logo_cached_at = monotonic()
+            return image or (None, None)
 
     async def async_get_browse_image(self, media_content_type, media_content_id, media_image_id):
         if (
@@ -195,12 +230,12 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
             or media_content_id != media_image_id
             or not media_image_id.startswith("tmc1:")
         ):
-            return None
+            return None, None
         try:
             data, _ = await self.coordinator.client.logo(media_image_id)
-            return await self.hass.async_add_executor_job(fit_logo, data)
+            return await self.hass.async_add_executor_job(fit_logo, data) or (None, None)
         except TiviMuseError:
-            return None
+            return None, None
 
     async def async_browse_media(self, media_content_type=None, media_content_id=None):
         client = self.coordinator.client

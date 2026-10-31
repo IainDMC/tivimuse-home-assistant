@@ -28,3 +28,21 @@ jobs:
       - run: pip install -r requirements-test.txt
       - run: ruff check .
       - run: pytest -q
+  release:
+    needs: [hacs, hassfest, tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish validated version for HACS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python -c 'import json; print(json.load(open("custom_components/tivimuse/manifest.json"))["version"])')
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "Version already released"
+          else
+            gh release create "v$version" --target "$GITHUB_SHA" --title "TiviMuse $version" --notes-file CHANGELOG.md
+          fi
