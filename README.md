@@ -121,3 +121,11 @@ Licensed under GPL-3.0-or-later. Not affiliated with Unfolded Circle or Home Ass
 A selected media source without an Android `app_id` is supported; the separate foreground-app entity identifies Nuvio or SmartTube. Explicitly conflicting app IDs are still rejected. If using the Unfolded Circle media-player facade as the source, set its sound mode to the native Android TV media player rather than Automatic selection or the display itself. This prevents the facade from feeding the combined display back into itself.
 
 To preserve existing Remote 3 activity assignments when replacing a removed legacy display, the new combined entity can be assigned the old entity ID in Home Assistant, provided that ID is free. Do not overwrite a still-registered legacy entity.
+
+## Programme timeline and original presentation
+
+The combined Remote 3 display shows the currently airing TiviMuse programme's duration and elapsed time in both live and timeshift modes, following the EPG start/end times. Pausing the video does not pause the channel schedule. Missing programme times clear the timeline rather than substituting buffer progress. Seeking on this programme bar is translated into the available buffer range; seeking outside that range is clamped to the available window. The original native TiviMuse HA media player still exposes buffer coordinates for existing controls and automations.
+
+Nuvio and SmartTube use the original Remote 3 poster compositor and search/fallback ordering. Source artwork and app logos retain their original bytes, size and transparency. Blurred poster backgrounds use the original 640-pixel compositor; unblurred posters retain their original artwork. Optional JSON settings preserve custom app names, logo mappings and complete per-app artwork orders.
+
+App transitions explicitly clear old text and progress and immediately show the next app's available logo. TiviMuse channel-logo URLs are published only once the image is ready, with bounded retries and an updated URL when loading succeeds.

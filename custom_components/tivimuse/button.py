@@ -22,4 +22,4 @@ class DisplayButton(DisplayControl, ButtonEntity):
                 raise HomeAssistantError("TiviMuse is not reachable")
         if runtime.display:
             runtime.native._logo_cache_key = runtime.native._logo_cache = None
-            runtime.display.refresh_artwork()
+            runtime.display.refresh_artwork(clear_cache=self.key == "clear_artwork_cache")

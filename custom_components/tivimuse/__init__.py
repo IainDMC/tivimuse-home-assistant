@@ -82,7 +82,13 @@ async def async_reload_entry(hass, entry):
     ):
         runtime.options = dict(entry.options)
         runtime.display.options = entry.options
-        runtime.display.refresh_artwork()
+        runtime.display.refresh_artwork(
+            clear_cache=bool(
+                changed.intersection(
+                    {"tmdb_token", "tmdb_language", "tmdb_enabled", "tmdb_minimum_match"}
+                )
+            )
+        )
         return
     await hass.config_entries.async_reload(entry.entry_id)
 

@@ -47,18 +47,23 @@ class DisplayArtworkTest(unittest.TestCase):
         ]:
             self.assertEqual(artwork.nuvio_type(attrs), expected)
 
-    def test_fitted_posters_preserve_all_edges(self):
+    def test_source_artwork_is_not_resized_or_reframed(self):
         for size in [(200, 600), (600, 200)]:
             raw = BytesIO()
-            Image.new("RGBA", size, "white").save(raw, "PNG")
+            Image.new("RGBA", size, (255, 0, 0, 100)).save(raw, "PNG")
             data, content_type = artwork.fit_poster(raw.getvalue(), False, 150)
-            result = Image.open(BytesIO(data))
-            self.assertEqual(result.size, (768, 512))
+            self.assertEqual(data, raw.getvalue())
+            self.assertEqual(Image.open(BytesIO(data)).size, size)
             self.assertEqual(content_type, "image/png")
-            left, top, right, bottom = result.getbbox()
-            self.assertGreaterEqual(left, 16)
-            self.assertGreaterEqual(top, 16)
-            self.assertLessEqual(right, 752)
-            self.assertLessEqual(bottom, 496)
-            self.assertAlmostEqual((right - left) / (bottom - top), size[0] / size[1], places=2)
         self.assertEqual(artwork.fit_poster(b"broken image"), (None, None))
+
+    def test_original_blurred_poster_geometry_and_darkening(self):
+        raw = BytesIO()
+        Image.new("RGB", (200, 600), "white").save(raw, "PNG")
+        data, _ = artwork.fit_poster(raw.getvalue(), True, 150)
+        image = Image.open(BytesIO(data))
+        self.assertEqual(image.size, (960, 640))
+        self.assertEqual(image.mode, "RGB")
+        self.assertEqual(image.getpixel((480, 0)), (255, 255, 255))
+        self.assertEqual(image.getpixel((480, 639)), (255, 255, 255))
+        self.assertLess(image.getpixel((0, 320))[0], 220)

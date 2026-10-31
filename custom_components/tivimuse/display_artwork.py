@@ -8,7 +8,16 @@ from difflib import SequenceMatcher
 from io import BytesIO
 
 import aiohttp
-from PIL import Image, ImageFilter, ImageOps, ImageStat
+from PIL import Image, ImageOps, ImageStat
+
+
+class PosterURL(str):
+    """A poster URL retaining the original movie/show classification."""
+
+    def __new__(cls, value, media_type):
+        instance = super().__new__(cls, value)
+        instance.media_type = media_type
+        return instance
 
 
 def app_kind(value):
@@ -47,25 +56,23 @@ def nuvio_type(attributes):
     return "Unknown"
 
 
-def fit_poster(data, blurred=False, width_percent=100):
-    """Keep a complete poster on a square background suitable for Remote 3."""
+def unmodified_image(data):
+    """Preserve source/app artwork bytes, format, dimensions and transparency."""
     try:
         with Image.open(BytesIO(data)) as source:
-            poster = ImageOps.exif_transpose(source).convert("RGBA")
-            width = round(512 * max(100, min(200, width_percent)) / 100)
-            if blurred:
-                canvas = ImageOps.fit(poster, (width, 512), method=Image.Resampling.LANCZOS)
-                canvas = canvas.filter(ImageFilter.GaussianBlur(24))
-                canvas.alpha_composite(Image.new("RGBA", canvas.size, (0, 0, 0, 100)))
-            else:
-                canvas = Image.new("RGBA", (width, 512))
-            fitted = ImageOps.contain(poster, (480, 480), Image.Resampling.LANCZOS)
-            canvas.alpha_composite(
-                fitted, ((width - fitted.width) // 2, (512 - fitted.height) // 2)
-            )
-            output = BytesIO()
-            canvas.save(output, "PNG")
-            return output.getvalue(), "image/png"
+            content_type = Image.MIME.get(source.format, "image/png")
+            source.verify()
+        return data, content_type
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return None, None
+
+
+def fit_poster(data, blurred=False, width_percent=100):
+    """Use the original compositor only when its blurred-poster option is on."""
+    if not blurred:
+        return unmodified_image(data)
+    try:
+        return compose_poster(data, True, None, width_percent), "image/png"
     except (OSError, ValueError, Image.DecompressionBombError):
         return None, None
 
@@ -74,7 +81,7 @@ async def tmdb_poster(session, token, title, content_type, language, minimum_mat
     """Only search on an explicit opt-in, with the key in an authorization header."""
     if not token or not title:
         return None
-    kind = {"Movie": "movie", "Episode": "tv"}.get(content_type, "multi")
+    kind = "multi"
     try:
         async with session.get(
             f"https://api.themoviedb.org/3/search/{kind}",
@@ -97,7 +104,7 @@ async def tmdb_poster(session, token, title, content_type, language, minimum_mat
                 and isinstance(path, str)
                 and path.startswith("/")
             ):
-                return "https://image.tmdb.org/t/p/w500" + path
+                return PosterURL("https://image.tmdb.org/t/p/w500" + path, item.get("media_type"))
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, AttributeError, TypeError):
         pass
     return None
@@ -159,3 +166,71 @@ def style_logo(data, scale=100, shape="square", background="transparent"):
             return result.getvalue(), "image/png"
     except (OSError, ValueError, Image.DecompressionBombError):
         return None, None
+
+
+# Original Remote 3 compositor (IainDMC, MIT); see NOTICE.
+def compose_poster(
+    original: bytes,
+    blurred: bool = True,
+    logo_bytes: bytes | None = None,
+    width_percent: float = 100,
+) -> bytes:
+    """Sharp fitted poster over a blurred, edge-darkened square backdrop."""
+    from PIL import Image, ImageFilter, ImageOps
+
+    with Image.open(BytesIO(original)) as source:
+        poster = ImageOps.exif_transpose(source).convert("RGB")
+    size = 640
+    width = round(size * max(100, min(200, float(width_percent))) / 100)
+    canvas = ImageOps.fit(poster, (width, size), method=Image.Resampling.LANCZOS)
+    canvas = (
+        canvas.filter(ImageFilter.GaussianBlur(24)).convert("RGBA")
+        if blurred
+        else Image.new("RGBA", (width, size), (0, 0, 0, 255))
+    )
+    foreground = ImageOps.contain(poster, (size, size), method=Image.Resampling.LANCZOS)
+    left = (width - foreground.width) // 2
+    top = (size - foreground.height) // 2
+    mask = Image.new("L", (width, size))
+    pixels = mask.load()
+    for y in range(size):
+        for x in range(width):
+            distance = max(
+                (left - x) / max(left, 1),
+                (x - left - foreground.width + 1) / max(left, 1),
+                (top - y) / max(top, 1),
+                (y - top - foreground.height + 1) / max(top, 1),
+                0,
+            )
+            pixels[x, y] = round(255 * (0.15 + 0.30 * min(distance, 1)))
+    canvas.alpha_composite(
+        Image.composite(
+            Image.new("RGBA", canvas.size, (0, 0, 0, 255)), Image.new("RGBA", canvas.size), mask
+        )
+    )
+    canvas.paste(foreground, (left, top))
+    if logo_bytes:
+        try:
+            with Image.open(BytesIO(logo_bytes)) as source:
+                logo = source.convert("RGBA")
+            bounds = logo.getbbox()
+            if bounds:
+                logo = logo.crop(bounds)
+                logo = ImageOps.contain(
+                    logo, (round(width * 0.75), 190), method=Image.Resampling.LANCZOS
+                )
+                position = ((width - logo.width) // 2, size - logo.height - 26)
+                shadow = Image.new("RGBA", canvas.size)
+                shadow.paste(
+                    (0, 0, 0, 190),
+                    (position[0], position[1], position[0] + logo.width, position[1] + logo.height),
+                    logo.getchannel("A"),
+                )
+                canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(5)))
+                canvas.alpha_composite(logo, position)
+        except Exception:
+            # Unsupported logos must not prevent the programme poster displaying.
+            pass
+    output = BytesIO()
+    canvas.convert("RGB").save(output, format="PNG")
+    return output.getvalue()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT
@@ -94,6 +96,21 @@ class DisplayOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         errors = {}
         if user_input is not None:
+            parsed = dict(user_input)
+            for key in ("app_names", "app_logos", "app_artwork_profiles"):
+                field = f"{key}_json"
+                if field in parsed:
+                    try:
+                        value = json.loads(parsed.pop(field) or "{}")
+                        if not isinstance(value, dict) or not all(
+                            isinstance(k, str)
+                            and isinstance(v, str if key != "app_artwork_profiles" else (str, list))
+                            for k, v in value.items()
+                        ):
+                            raise ValueError
+                        parsed[key] = value
+                    except (ValueError, TypeError):
+                        errors["base"] = "invalid_display_json"
             if user_input.get("combined_display"):
                 registry = er.async_get(self.hass)
                 for name in ("source_entity", "app_entity"):
@@ -107,7 +124,7 @@ class DisplayOptionsFlow(config_entries.OptionsFlow):
                         errors["base"] = "invalid_display_source"
             if not errors:
                 return self.async_create_entry(
-                    title="", data={**self.config_entry.options, **user_input}
+                    title="", data={**self.config_entry.options, **parsed}
                 )
         values = dict(self.config_entry.options)
         # Reuse compatible settings privately; never copy a guide URL or webhook.
@@ -128,6 +145,10 @@ class DisplayOptionsFlow(config_entries.OptionsFlow):
                     "poster_blurred_background",
                     "poster_canvas_width",
                     "tmdb_minimum_match",
+                    "fallback_logo",
+                    "app_names",
+                    "app_logos",
+                    "app_artwork_profiles",
                 ):
                     if name in old:
                         values[name] = old[name]
@@ -145,6 +166,8 @@ class DisplayOptionsFlow(config_entries.OptionsFlow):
                             values[f"{kind}_artwork"] = allowed[0]
                             values[f"{kind}_fallback_artwork"] = allowed[-1]
         values.update(user_input or {})
+        for key in ("app_names", "app_logos", "app_artwork_profiles"):
+            values.setdefault(f"{key}_json", json.dumps(values.get(key, {}), indent=2))
         entity_selector = selector.EntitySelector(
             selector.EntitySelectorConfig(domain="media_player")
         )
@@ -174,7 +197,12 @@ class DisplayOptionsFlow(config_entries.OptionsFlow):
             vol.Required(
                 "poster_blurred_background", default=values.get("poster_blurred_background", False)
             ): bool,
+            vol.Optional("fallback_logo"): str,
         }
+        for key in ("app_names", "app_logos", "app_artwork_profiles"):
+            fields[vol.Optional(f"{key}_json")] = selector.TextSelector(
+                selector.TextSelectorConfig(multiline=True)
+            )
         for kind in ("nuvio", "smarttube"):
             fields[
                 vol.Required(

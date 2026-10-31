@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
+from datetime import timedelta
 from urllib.parse import urljoin
 
-import aiohttp
 from homeassistant.components.media_player import (
     MediaPlayerDeviceClass,
     MediaPlayerEntity,
@@ -16,7 +17,7 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.util import dt as dt_util
 
@@ -28,6 +29,7 @@ from .display_artwork import (
     nuvio_type,
     style_logo,
     tmdb_poster,
+    unmodified_image,
 )
 
 ACTIVE = {"playing", "paused", "buffering"}
@@ -74,6 +76,12 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         self._logo_style_key = None
         self._styled_logo = None
         self.artwork_source = "None"
+        self._poster_cache = {}
+        self._poster_image_cache = {}
+        self._selected_url = None
+        self._native_art_task = None
+        self._native_art_key = None
+        self._native_art_image = None
 
     async def async_added_to_hass(self):
         self.async_on_remove(
@@ -86,11 +94,22 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         self.async_on_remove(self.native.coordinator.async_add_listener(self._changed))
         self.async_on_remove(self._cancel_artwork)
         self._changed()
+        self.async_on_remove(
+            async_track_time_interval(self.hass, self._programme_tick, timedelta(seconds=1))
+        )
+
+    @callback
+    def _programme_tick(self, now):
+        if self._programme_window:
+            self.async_write_ha_state()
 
     def _cancel_artwork(self):
         if self._art_task:
             self._art_task.cancel()
             self._art_task = None
+        if self._native_art_task:
+            self._native_art_task.cancel()
+            self._native_art_task = None
 
     @property
     def _foreground(self):
@@ -106,8 +125,11 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
             return None
         # Foreground identity is authoritative; do not let a stale media title choose the app.
         attrs = state.attributes
-        identity = attrs.get("app_id") or attrs.get("source") or attrs.get("app_name")
-        kind = app_kind(identity)
+        kind = (
+            app_kind(attrs.get("app_id"))
+            or app_kind(attrs.get("source"))
+            or app_kind(attrs.get("app_name"))
+        )
         return (
             None if kind == "tivimuse" and not self.options.get("tivimuse_enabled", True) else kind
         )
@@ -115,14 +137,22 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
     @property
     def _source(self):
         state = self.hass.states.get(self._source_id)
-        if not state or state.state not in ACTIVE or self._kind not in ("nuvio", "smarttube"):
+        if (
+            not state
+            or not state.attributes.get("media_title")
+            or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+            or self._kind not in ("nuvio", "smarttube")
+        ):
             return None
         identity = state.attributes.get("app_id") or state.attributes.get("app_name")
         source_kind = app_kind(state.attributes.get("app_id")) or app_kind(
             state.attributes.get("app_name")
         )
         if identity and source_kind != self._kind:
-            return None
+            raw = state.attributes.get("app_name") or state.attributes.get("app_id")
+            mapped = self.options.get("app_names", {}).get(raw, raw)
+            if source_kind is not None or mapped != self.app_name:
+                return None
         return state
 
     def _attribute(self, name):
@@ -133,10 +163,9 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     @property
     def available(self):
-        if not self._foreground:
-            state = self.hass.states.get(self._app_id)
-            return bool(state and state.state == "off")
-        return self.native.available if self._kind == "tivimuse" else True
+        # Keep the facade alive so explicit empty fields clear Remote 3's cache.
+        # Native connection health remains on the native entity and diagnostics.
+        return True
 
     @property
     def state(self):
@@ -144,7 +173,7 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         if app and app.state == "off":
             return "off"
         if self._kind == "tivimuse":
-            return self.native.state
+            return self.native.state if self.native.available else "idle"
         return self._source.state if self._source else "idle"
 
     @property
@@ -154,50 +183,102 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     @property
     def app_name(self):
-        return {"tivimuse": "TiviMuse", "nuvio": "Nuvio", "smarttube": "SmartTube"}.get(self._kind)
+        state = self._foreground
+        raw = (
+            (
+                state.attributes.get("app_name")
+                or state.attributes.get("source")
+                or state.attributes.get("app_id")
+            )
+            if state
+            else None
+        )
+        names = self.options.get("app_names", {})
+        return (
+            names.get(raw)
+            or names.get(self.app_id)
+            or {"tivimuse": "TiviMuse", "nuvio": "Nuvio", "smarttube": "SmartTube"}.get(self._kind)
+            or raw
+        )
 
     @property
     def media_title(self):
         if self._kind == "tivimuse" and not self.options.get("show_program_as_title", True):
-            return None
-        return self._attribute("media_title")
+            return ""
+        return self._attribute("media_title") or ""
 
     @property
     def media_artist(self):
         if self._kind == "tivimuse" and not self.options.get("show_channel_as_artist", True):
-            return None
-        return self._attribute("media_artist")
+            return ""
+        return self._attribute("media_artist") or ""
 
     @property
     def media_album_name(self):
-        return self._attribute("media_album_name")
+        return self._attribute("media_album_name") or ""
 
     @property
     def media_content_id(self):
-        return self._attribute("media_content_id")
+        return self._attribute("media_content_id") or ""
 
     @property
     def media_content_type(self):
-        return self._attribute("media_content_type")
+        return self._attribute("media_content_type") or "app"
 
     @property
     def media_duration(self):
+        if self._kind == "tivimuse":
+            window = self._programme_window
+            return (
+                (window[1] - window[0]) if window and self.options.get("show_progress", True) else 0
+            )
         return (
-            self._attribute("media_duration") if self.options.get("show_progress", True) else None
+            (self._attribute("media_duration") or 0)
+            if self.options.get("show_progress", True)
+            else 0
         )
 
     @property
     def media_position(self):
+        if self._kind == "tivimuse":
+            window = self._programme_window
+            return (
+                min(max(0, dt_util.utcnow().timestamp() - window[0]), window[1] - window[0])
+                if window and self.options.get("show_progress", True)
+                else 0
+            )
         return (
-            self._attribute("media_position") if self.options.get("show_progress", True) else None
+            (self._attribute("media_position") or 0)
+            if self.options.get("show_progress", True)
+            else 0
         )
 
     @property
     def media_position_updated_at(self):
         if not self.options.get("show_progress", True):
             return None
+        if self._kind == "tivimuse":
+            return dt_util.utcnow()
         value = self._attribute("media_position_updated_at")
+        if not value and not self.media_title:
+            return dt_util.utcnow()
         return dt_util.parse_datetime(value) if isinstance(value, str) else value
+
+    @property
+    def _programme_window(self):
+        if self._kind != "tivimuse" or not self.native.available or self.native.state not in ACTIVE:
+            return None
+        programme = self.native.coordinator.data.get("programme") or {}
+        start, end = programme.get("start_ms"), programme.get("end_ms")
+        if (
+            isinstance(start, (int, float))
+            and isinstance(end, (int, float))
+            and math.isfinite(start)
+            and math.isfinite(end)
+            and end > start
+        ):
+            return start / 1000, end / 1000
+        return None
 
     @property
     def volume_level(self):
@@ -234,16 +315,20 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     @property
     def extra_state_attributes(self):
-        if self._kind == "tivimuse" and self.available:
+        if self._kind == "tivimuse" and self.native.available:
             data = {**self.native.extra_state_attributes, "display_app": "TiviMuse"}
             if not self.options.get("show_next_program", True):
                 data.pop("next_programme", None)
             return data
+        content_type = (
+            nuvio_type(self._source.attributes) if self._kind == "nuvio" and self._source else None
+        )
+        if content_type == "Unknown":
+            media_type = getattr(self._poster_cache.get(self._poster_key()), "media_type", None)
+            content_type = {"movie": "Movie", "tv": "Episode"}.get(media_type, content_type)
         return {
             "display_app": self.app_name,
-            "nuvio_content_type": nuvio_type(self._source.attributes)
-            if self._kind == "nuvio" and self._source
-            else None,
+            "nuvio_content_type": content_type,
         }
 
     def _artwork_key(self):
@@ -263,133 +348,286 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
             nuvio_type(source.attributes) if self._kind == "nuvio" else "Unknown",
         )
 
-    @callback
-    def _changed(self, event=None):
-        self.artwork_source = (
-            "TiviMuse EPG logo"
-            if self._kind == "tivimuse" and self.native.media_image_url
-            else self.artwork_source
-        )
-        key = self._artwork_key()
-        if key != self._art_key:
-            self._cancel_artwork()
-            self._art_key = key
-            self._art_image = None
-            self.artwork_source = (
-                "TiviMuse EPG logo"
-                if self._kind == "tivimuse" and self.native.media_image_url
-                else "None"
-            )
-            self._image_revision += 1
-            if key:
-                self._art_task = self.hass.async_create_background_task(
-                    self._load_artwork(key),
-                    "TiviMuse Remote 3 artwork",
-                )
-        self.async_write_ha_state()
-
-    @callback
-    def refresh_artwork(self):
-        self._art_key = None
-        self._logo_style_key = None
-        self._styled_logo = None
-        self._image_revision += 1
-        self._changed()
-
-    async def _load_artwork(self, key):
-        """Resolve artwork once per media change, never on playback-position ticks."""
-        session = async_get_clientsession(self.hass)
-        kind = key[0]
-        primary = self.options.get(f"{kind}_artwork", "tmdb_poster")
-        fallback = self.options.get(f"{kind}_fallback_artwork", "source_artwork")
-        result = None, None
-        for choice in dict.fromkeys((primary, fallback)):
-            data = None
-            if (
-                choice == "tmdb_poster"
-                and self.options.get("tmdb_enabled")
-                and self.options.get("tmdb_for_other_apps", True)
-            ):
-                # Live TV cannot enter this path: _artwork_key requires Nuvio/SmartTube.
-                title = key[4] if key[5] == "Episode" and key[4] else key[1]
-                url = await tmdb_poster(
-                    session,
-                    self.options.get("tmdb_token"),
-                    title,
-                    key[5],
-                    self.options.get("tmdb_language", "en-US"),
-                    self.options.get("tmdb_minimum_match", 60),
-                )
-                data = await fetch_artwork(session, url)
-            elif choice == "source_artwork" and self._source:
-                source = self.hass.data["media_player"].get_entity(self._source_id)
-                if source:
-                    try:
-                        async with asyncio.timeout(10):
-                            image = await source.async_get_media_image()
-                        data = image[0] if image else None
-                    except (
-                        HomeAssistantError,
-                        OSError,
-                        ValueError,
-                        aiohttp.ClientError,
-                        TimeoutError,
-                    ):
-                        data = None
-            elif choice == "app_logo":
-                url = self.options.get(f"{kind}_logo")
-                if isinstance(url, str) and url.startswith("/local/"):
-                    try:
-                        url = urljoin(get_url(self.hass, allow_external=False), url)
-                    except NoURLAvailableError:
-                        url = None
-                data = await fetch_artwork(session, url)
-            if data:
-                result = await self.hass.async_add_executor_job(
-                    fit_poster,
-                    data,
-                    self.options.get("poster_blurred_background", False),
-                    self.options.get("poster_canvas_width", 100),
-                )
-            if result[0]:
-                if key == self._artwork_key():
-                    self.artwork_source = choice
-                break
-        if key == self._artwork_key():
-            self._art_image = result if result[0] else None
-            self._image_revision += 1
-            self.async_write_ha_state()
-
-    @property
-    def media_image_url(self):
-        if self._kind == "tivimuse":
-            url = self.native.media_image_url if self.available else None
-            return f"{url}/display/{self._image_revision}" if url else None
-        if self._art_image and self._art_key == self._artwork_key():
-            digest = hashlib.sha256(repr(self._art_key).encode()).hexdigest()[:16]
-            return f"tivimuse://display/{digest}/{self._image_revision}"
-        return None
-
-    async def async_get_media_image(self, width=None, height=None):
-        if self._kind == "tivimuse" and self.available:
-            image = await self.native.async_get_media_image()
-            if self._kind != "tivimuse" or not image or not image[0]:
-                return None, None
-            key = (
-                hash(image[0]),
+    def _native_image_key(self):
+        if self._kind != "tivimuse" or not self.native.available or self.native.state not in ACTIVE:
+            return None
+        url = self.native.media_image_url
+        return (
+            (
+                url,
                 self.options.get("channel_icon_scale", 100),
                 self.options.get("icon_canvas_shape", "square"),
                 self.options.get("icon_background", "transparent"),
             )
-            if key != self._logo_style_key:
-                styled = await self.hass.async_add_executor_job(style_logo, image[0], *key[1:])
-                if self._kind != "tivimuse":
-                    return None, None
-                self._logo_style_key, self._styled_logo = key, styled
-            return self._styled_logo
+            if url
+            else None
+        )
+
+    def _app_logo(self):
+        logos = self.options.get("app_logos", {})
+        return (
+            logos.get(self.app_name)
+            or logos.get(self.app_id)
+            or self.options.get(f"{self._kind}_logo")
+            or self.options.get("fallback_logo")
+        )
+
+    def _source_artwork(self):
+        source = self._source
+        if not source:
+            return None
+        return (
+            source.attributes.get("entity_picture")
+            or source.attributes.get("entity_picture_local")
+            or source.attributes.get("media_image_url")
+        )
+
+    def _art_preferences(self):
+        marker = f"{self.app_id or ''} {self.app_name or ''}".casefold()
+        for match, profile in self.options.get("app_artwork_profiles", {}).items():
+            if str(match).casefold() in marker:
+                values = (
+                    profile.split(",")
+                    if isinstance(profile, str)
+                    else profile
+                    if isinstance(profile, (list, tuple))
+                    else []
+                )
+                valid = tuple(
+                    str(x).strip()
+                    for x in values
+                    if str(x).strip() in ("tmdb_poster", "source_artwork", "app_logo")
+                )
+                if valid:
+                    return (*valid, "app_logo")
+        return (
+            self.options.get(f"{self._kind}_artwork", "tmdb_poster"),
+            self.options.get(f"{self._kind}_fallback_artwork", "source_artwork"),
+            "app_logo",
+        )
+
+    def _poster_key(self):
+        return (
+            self.media_title,
+            self.options.get("tmdb_language", "en-US"),
+            self.options.get("tmdb_minimum_match", 60),
+        )
+
+    def _instant_artwork(self):
+        if self._kind == "tivimuse":
+            return self._app_logo()
+        if self._source:
+            for choice in self._art_preferences():
+                if (
+                    choice == "tmdb_poster"
+                    and self.options.get("tmdb_enabled")
+                    and self.options.get("tmdb_for_other_apps", True)
+                    and not self.options.get("poster_blurred_background", False)
+                ):
+                    url = self._poster_cache.get(self._poster_key())
+                    if url:
+                        return url
+                if choice == "source_artwork" and self._source_artwork():
+                    return self._source_artwork()
+                if choice == "app_logo" and self._app_logo():
+                    return self._app_logo()
+        return self._app_logo()
+
+    @callback
+    def _changed(self, event=None):
+        native_key = self._native_image_key()
+        if native_key != self._native_art_key:
+            if self._native_art_task:
+                self._native_art_task.cancel()
+            self._native_art_key = native_key
+            self._native_art_image = None
+            self._image_revision += 1
+            if native_key:
+                self._native_art_task = self.hass.async_create_background_task(
+                    self._load_native_logo(native_key), "TiviMuse ready channel logo"
+                )
+        key = self._artwork_key()
+        if key != self._art_key:
+            if self._art_task:
+                self._art_task.cancel()
+            self._art_key = key
+            self._art_image = None
+            self._selected_url = None
+            if (
+                key
+                and self._art_preferences()[0] == "tmdb_poster"
+                and self.options.get("tmdb_enabled")
+                and self.options.get("tmdb_for_other_apps", True)
+                and self.options.get("poster_blurred_background", False)
+            ):
+                url = self._poster_cache.get(self._poster_key())
+                self._art_image = self._poster_image_cache.get(
+                    (url, self.options.get("poster_canvas_width", 100))
+                )
+                if self._art_image:
+                    self.artwork_source = "TMDB poster"
+            self._image_revision += 1
+            if key:
+                self._art_task = self.hass.async_create_background_task(
+                    self._load_artwork(key), "TiviMuse Remote 3 artwork"
+                )
+        if self._kind == "tivimuse":
+            self.artwork_source = (
+                "TiviMuse EPG logo"
+                if self._native_art_image
+                else "app logo"
+                if self._app_logo()
+                else "None"
+            )
+        elif not self._art_image and not self._selected_url:
+            self.artwork_source = (
+                "source artwork"
+                if self._source_artwork() and self._instant_artwork() == self._source_artwork()
+                else "app logo"
+                if self._instant_artwork()
+                else "None"
+            )
+        self.async_write_ha_state()
+
+    @callback
+    def refresh_artwork(self, clear_cache=False):
+        if clear_cache:
+            self._poster_cache.clear()
+            self._poster_image_cache.clear()
+        self._art_key = None
+        self._native_art_key = None
+        self._changed()
+
+    async def _load_native_logo(self, key):
+        # Publish a URL only after its bytes are ready. Remote 3 must never cache
+        # an initial 404 while the Shield is still loading the channel logo.
+        for delay in (0, 1, 3, 10, 30):
+            if delay:
+                await asyncio.sleep(delay)
+            if key != self._native_image_key():
+                return
+            image = await self.native.async_get_media_image()
+            if not image or not image[0]:
+                continue
+            styled = await self.hass.async_add_executor_job(style_logo, image[0], *key[1:])
+            if key != self._native_image_key():
+                return
+            if styled[0]:
+                self._native_art_image = styled
+                self._image_revision += 1
+                self.artwork_source = "TiviMuse EPG logo"
+                self.async_write_ha_state()
+                return
+
+    async def _load_artwork(self, key):
+        session = async_get_clientsession(self.hass)
+        for choice in dict.fromkeys(self._art_preferences()):
+            if key != self._artwork_key():
+                return
+            if (
+                choice == "tmdb_poster"
+                and self._source
+                and self.options.get("tmdb_enabled")
+                and self.options.get("tmdb_for_other_apps", True)
+            ):
+                cache_key = self._poster_key()
+                if cache_key not in self._poster_cache:
+                    url = await tmdb_poster(
+                        session,
+                        self.options.get("tmdb_token"),
+                        key[1],
+                        key[5],
+                        self.options.get("tmdb_language", "en-US"),
+                        self.options.get("tmdb_minimum_match", 60),
+                    )
+                    if len(self._poster_cache) >= 32:
+                        self._poster_cache.pop(next(iter(self._poster_cache)))
+                    self._poster_cache[cache_key] = url
+                url = self._poster_cache[cache_key]
+                if not url:
+                    continue
+                if self.options.get("poster_blurred_background", False):
+                    image_key = (url, self.options.get("poster_canvas_width", 100))
+                    result = self._poster_image_cache.get(image_key)
+                    if result is None:
+                        data = await fetch_artwork(session, url)
+                        result = (
+                            await self.hass.async_add_executor_job(
+                                fit_poster, data, True, image_key[1]
+                            )
+                            if data
+                            else (None, None)
+                        )
+                        if result[0]:
+                            if len(self._poster_image_cache) >= 32:
+                                self._poster_image_cache.pop(next(iter(self._poster_image_cache)))
+                            self._poster_image_cache[image_key] = result
+                    if not result[0]:
+                        continue
+                else:
+                    result = None
+                if key == self._artwork_key():
+                    self._art_image = result
+                    self._selected_url = url if result is None else None
+                    self._image_revision += 1
+                    self.artwork_source = "TMDB poster"
+                    self.async_write_ha_state()
+                return
+            url = (
+                self._source_artwork()
+                if choice == "source_artwork"
+                else self._app_logo()
+                if choice == "app_logo"
+                else None
+            )
+            if url:
+                if key == self._artwork_key():
+                    self._selected_url = url
+                    self.artwork_source = (
+                        "source artwork" if choice == "source_artwork" else "app logo"
+                    )
+                    self.async_write_ha_state()
+                return
+
+    @property
+    def media_image_url(self):
+        if self._kind == "tivimuse":
+            if self._native_art_image and self._native_art_key == self._native_image_key():
+                digest = hashlib.sha256(repr(self._native_art_key).encode()).hexdigest()[:16]
+                return f"tivimuse://display/native/{digest}/{self._image_revision}"
+            return self._app_logo()
         if self._art_key == self._artwork_key():
-            return self._art_image or (None, None)
-        return None, None
+            if self._art_image:
+                digest = hashlib.sha256(repr(self._art_key).encode()).hexdigest()[:16]
+                return f"tivimuse://display/{digest}/{self._image_revision}"
+            if self._selected_url:
+                return self._selected_url
+        return self._instant_artwork()
+
+    @property
+    def entity_picture(self):
+        url = self.media_image_url
+        return self.media_image_local if url and url.startswith("tivimuse://") else url or ""
+
+    async def async_get_media_image(self, width=None, height=None):
+        if self._kind == "tivimuse":
+            return (
+                self._native_art_image
+                if self._native_art_image and self._native_art_key == self._native_image_key()
+                else (None, None)
+            )
+        if self._art_key == self._artwork_key() and self._art_image:
+            return self._art_image
+        url = self.media_image_url
+        if url and url.startswith("/"):
+            try:
+                url = urljoin(get_url(self.hass, allow_external=False), url)
+            except NoURLAvailableError:
+                return None, None
+        data = await fetch_artwork(async_get_clientsession(self.hass), url)
+        return (
+            await self.hass.async_add_executor_job(unmodified_image, data) if data else (None, None)
+        )
 
     async def _command(self, service, **data):
         if service in (
@@ -410,7 +648,7 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
             handlers = {
                 "media_play": self.native.async_media_play,
                 "media_pause": self.native.async_media_pause,
-                "media_seek": lambda: self.native.async_media_seek(data["seek_position"]),
+                "media_seek": lambda: self._seek_programme(data["seek_position"]),
             }
             if service not in handlers:
                 raise HomeAssistantError("This control is not available for TiviMuse")
@@ -436,6 +674,24 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     async def async_media_seek(self, position):
         await self._command("media_seek", seek_position=position)
+
+    async def _seek_programme(self, position):
+        """Translate a programme-bar target into the player's timeshift coordinates."""
+        window = self._programme_window
+        if not window:
+            raise HomeAssistantError("Programme times are unavailable")
+        data = self.native.coordinator.data
+        if not data.get("can_seek"):
+            raise HomeAssistantError("This stream cannot seek")
+        live_ms = data.get("live_position_ms")
+        if live_ms is None:
+            live_ms = data.get("duration_ms")
+        if not isinstance(live_ms, (int, float)) or not math.isfinite(live_ms) or live_ms < 0:
+            raise HomeAssistantError("The timeshift window is unavailable")
+        if not math.isfinite(position):
+            raise HomeAssistantError("Invalid seek position")
+        target = live_ms / 1000 - (dt_util.utcnow().timestamp() - window[0] - position)
+        await self.native.async_media_seek(min(max(0, target), live_ms / 1000))
 
     async def async_media_next_track(self):
         await self._command("media_next_track")

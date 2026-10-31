@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Show TiviMuse programme progress in the Remote 3 display in live and timeshift modes, using the programme start/end times instead of buffer size. Translate programme-bar seeks into available buffer coordinates. The native HA player retains its buffer controls.
+- Restore the original 640-pixel Remote 3 poster compositor, title lookup, cached artwork, app-name mappings and per-app artwork ordering. Source images and app logos are no longer resized or blurred as posters.
+- Clear title, channel, artwork and progress explicitly on app changes, including idle/unavailable foreground states, so the remote does not retain the previous TV guide.
+- Load and retry TiviMuse logos before publishing their image URLs, preventing first-fetch failures from leaving Remote 3 with a cached missing logo.
+
 ## 0.4.2
 
 - Correct native Cast metadata matching: a generic `AndroidNativeApp` ID no longer masks a recognized Nuvio or SmartTube app name. This was reproduced on the live source while Nuvio supplied Colony metadata. Known conflicting app identities remain rejected.

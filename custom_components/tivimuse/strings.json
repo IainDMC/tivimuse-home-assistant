@@ -76,12 +76,17 @@
           "smarttube_fallback_artwork": "SmartTube fallback artwork",
           "smarttube_logo": "SmartTube app logo URL (optional)",
           "tmdb_minimum_match": "Minimum poster title match (%)",
-          "poster_canvas_width": "Poster canvas width (%)"
+          "poster_canvas_width": "Poster canvas width (%)",
+          "fallback_logo": "Fallback app logo URL",
+          "app_names_json": "App display names (JSON)",
+          "app_logos_json": "App logo mapping (JSON)",
+          "app_artwork_profiles_json": "Per-app artwork order (JSON)"
         }
       }
     },
     "error": {
-      "invalid_display_source": "Select the underlying Shield media players, not a TiviMuse or old display entity. Both selected entities must exist."
+      "invalid_display_source": "Select the underlying Shield media players, not a TiviMuse or old display entity. Both selected entities must exist.",
+      "invalid_display_json": "Enter JSON objects for app names, logos and artwork profiles."
     }
   },
   "selector": {

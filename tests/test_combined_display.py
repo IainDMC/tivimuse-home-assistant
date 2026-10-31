@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from PIL import Image
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
@@ -168,7 +169,7 @@ async def test_display_starts_when_tivimuse_is_closed(hass):
         assert hass.states.get(DISPLAY).state == "playing"
         foreground(hass, "app.opentv.debug")
         await hass.async_block_till_done()
-        assert hass.states.get(DISPLAY).state == "unavailable"
+        assert hass.states.get(DISPLAY).state == "idle"
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
@@ -217,7 +218,7 @@ async def test_foreground_unavailable_does_not_keep_previous_media(hass, combine
     foreground(hass, "app.opentv.debug", "unavailable")
     await hass.async_block_till_done()
     state = hass.states.get(DISPLAY)
-    assert state.state == "unavailable"
+    assert state.state == "idle"
     assert not state.attributes.get("media_title")
 
 
@@ -356,3 +357,202 @@ async def test_native_cast_app_id_uses_identifiable_app_name(hass, combined):
         await hass.async_block_till_done()
         assert hass.states.get(DISPLAY).state == "paused"
         assert hass.states.get(DISPLAY).attributes["media_title"] == title
+
+
+async def test_programme_progress_replaces_buffer_progress_and_maps_seek(hass, combined):
+    entry, player = combined
+    now = dt_util.parse_datetime("2026-11-01T10:20:00Z")
+    start = now.timestamp() * 1000 - 1200000
+    with patch("custom_components.tivimuse.combined_display.dt_util.utcnow", return_value=now):
+        entry.runtime_data.coordinator.async_set_updated_data(
+            {
+                **NATIVE,
+                "mode": "timeshift",
+                "state": "paused",
+                "can_seek": True,
+                "duration_ms": 1800000,
+                "position_ms": 300000,
+                "live_position_ms": 1800000,
+                "programme": {
+                    "title": "One-hour programme",
+                    "start_ms": start,
+                    "end_ms": start + 3600000,
+                },
+            }
+        )
+        entity = hass.states.get(DISPLAY)
+        assert entity.attributes["media_duration"] == 3600
+        assert entity.attributes["media_position"] == 1200
+        assert player.native.media_duration == 1800
+        assert player.native.media_position == 300
+        with patch.object(
+            entry.runtime_data.coordinator.client, "command", new_callable=AsyncMock
+        ) as command:
+            await player.async_media_seek(600)
+            command.assert_awaited_once_with("seek", seconds=1200)
+    later = dt_util.parse_datetime("2026-11-01T10:20:20Z")
+    with patch("custom_components.tivimuse.combined_display.dt_util.utcnow", return_value=later):
+        player._programme_tick(later)
+        assert hass.states.get(DISPLAY).attributes["media_position"] == 1220
+        entry.runtime_data.coordinator.async_set_updated_data(
+            {
+                **NATIVE,
+                "mode": "timeshift",
+                "duration_ms": 1800000,
+                "position_ms": 300000,
+                "programme": None,
+            }
+        )
+        assert hass.states.get(DISPLAY).attributes["media_duration"] == 0
+        assert hass.states.get(DISPLAY).attributes["media_position"] == 0
+
+
+async def test_app_change_explicitly_clears_remote_fields_before_new_media(hass, combined):
+    _, player = combined
+    player.options = {**player.options, "nuvio_logo": "/local/icons/nuvio.png"}
+    foreground(hass, "com.nuvio.tv")
+    await hass.async_block_till_done()
+    attributes = hass.states.get(DISPLAY).attributes
+    assert attributes["media_title"] == ""
+    assert attributes["media_artist"] == ""
+    assert attributes["media_content_id"] == ""
+    assert attributes["media_duration"] == 0
+    assert attributes["media_position"] == 0
+    assert attributes["entity_picture"] == "/local/icons/nuvio.png"
+
+
+async def test_smarttube_artwork_and_logo_are_unmodified_even_with_blur_on(hass, combined):
+    _, player = combined
+    player.options = {
+        **player.options,
+        "smarttube_artwork": "source_artwork",
+        "smarttube_logo": "/local/icons/smarttube.png",
+        "poster_blurred_background": True,
+        "poster_canvas_width": 200,
+    }
+    foreground(hass, "org.smarttube.stable")
+    await hass.async_block_till_done()
+    assert hass.states.get(DISPLAY).attributes["entity_picture"] == "/local/icons/smarttube.png"
+    hass.states.async_set(
+        SOURCE,
+        "playing",
+        {
+            "app_id": "AndroidNativeApp",
+            "app_name": "SmartTube",
+            "media_title": "Unmodified thumbnail",
+            "entity_picture": "https://example.test/original-wide.jpg",
+        },
+    )
+    await hass.async_block_till_done()
+    assert (
+        hass.states.get(DISPLAY).attributes["entity_picture"]
+        == "https://example.test/original-wide.jpg"
+    )
+
+
+async def test_native_logo_is_published_only_when_bytes_are_ready(hass, combined, hass_client):
+    entry, player = combined
+    raw = BytesIO()
+    Image.new("RGBA", (800, 200), "blue").save(raw, "PNG")
+    with patch.object(
+        player.native,
+        "async_get_media_image",
+        side_effect=[(None, None), (raw.getvalue(), "image/png")],
+    ) as logo:
+        entry.runtime_data.coordinator.async_set_updated_data({**NATIVE, "logo_available": True})
+        assert hass.states.get(DISPLAY).attributes["entity_picture"] == ""
+        await player._native_art_task
+        entity = hass.states.get(DISPLAY)
+        assert entity.attributes["entity_picture"].startswith("/api/media_player_proxy/")
+        client = await hass_client()
+        response = await client.get(entity.attributes["entity_picture"])
+        assert response.status == 200
+        image = Image.open(BytesIO(await response.read()))
+        assert image.getpixel((256, 256)) == (0, 0, 255, 255)
+        assert logo.await_count == 2
+
+
+async def test_original_app_name_aliases_and_artwork_priority_are_preserved(hass, combined):
+    _, player = combined
+    player.options = {
+        **player.options,
+        "app_names": {"org.smarttube.stable": "YouTube"},
+        "app_logos": {"YouTube": "/local/icons/youtube.png"},
+        "app_artwork_profiles": {"smarttube": "app_logo,source_artwork,tmdb_poster"},
+    }
+    foreground(hass, "org.smarttube.stable")
+    hass.states.async_set(
+        SOURCE,
+        "playing",
+        {
+            "app_id": "AndroidNativeApp",
+            "app_name": "YouTube",
+            "media_title": "Original alias",
+            "entity_picture": "https://example.test/thumbnail.jpg",
+        },
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(DISPLAY).attributes["app_name"] == "YouTube"
+    assert hass.states.get(DISPLAY).attributes["media_title"] == "Original alias"
+    assert hass.states.get(DISPLAY).attributes["entity_picture"] == "/local/icons/youtube.png"
+
+
+async def test_late_channel_logo_does_not_replace_new_channel_logo(hass, combined):
+    entry, player = combined
+    entered, release = asyncio.Event(), asyncio.Event()
+    first_channel = NATIVE["channel_id"]
+    images = {}
+    for color in ("red", "blue"):
+        raw = BytesIO()
+        Image.new("RGBA", (200, 200), color).save(raw, "PNG")
+        images[color] = raw.getvalue()
+
+    async def load():
+        if player.native.media_content_id == first_channel:
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                await release.wait()
+            return images["red"], "image/png"
+        return images["blue"], "image/png"
+
+    with patch.object(player.native, "async_get_media_image", side_effect=load):
+        entry.runtime_data.coordinator.async_set_updated_data({**NATIVE, "logo_available": True})
+        await entered.wait()
+        old_task = player._native_art_task
+        entry.runtime_data.coordinator.async_set_updated_data(
+            {**NATIVE, "channel_id": "tmc1:new-channel", "logo_available": True}
+        )
+        await player._native_art_task
+        current_url = player.media_image_url
+        release.set()
+        await old_task
+        assert player.media_image_url == current_url
+        data, _ = await player.async_get_media_image()
+        assert Image.open(BytesIO(data)).getpixel((256, 256)) == (0, 0, 255, 255)
+
+
+async def test_original_json_settings_validate_and_persist(hass):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=DEVICE,
+        data={CONF_HOST: "test-device", CONF_PORT: 42990, CONF_TOKEN: "test-key"},
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"combined_display": False, "app_names_json": "[1,2]"}
+    )
+    assert result["errors"]["base"] == "invalid_display_json"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "combined_display": False,
+            "app_names_json": '{"org.smarttube.stable":"YouTube"}',
+            "app_artwork_profiles_json": '{"smarttube":["app_logo","source_artwork"]}',
+        },
+    )
+    assert result["type"] == "create_entry"
+    assert entry.options["app_names"] == {"org.smarttube.stable": "YouTube"}
+    assert entry.options["app_artwork_profiles"]["smarttube"] == ["app_logo", "source_artwork"]
