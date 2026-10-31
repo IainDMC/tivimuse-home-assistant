@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from urllib.parse import urljoin
 
@@ -237,7 +238,8 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
                 source = self.hass.data["media_player"].get_entity(self._source_id)
                 if source:
                     try:
-                        image = await source.async_get_media_image()
+                        async with asyncio.timeout(10):
+                            image = await source.async_get_media_image()
                         data = image[0] if image else None
                     except (
                         HomeAssistantError,

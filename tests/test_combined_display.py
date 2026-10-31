@@ -1,12 +1,14 @@
 """Real HA lifecycle, foreground arbitration and service routing for one display."""
 
 import asyncio
+from io import BytesIO
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from PIL import Image
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
 from custom_components.tivimuse.api import DeviceUnavailable
 from custom_components.tivimuse.const import CONF_TOKEN, DOMAIN
@@ -108,6 +110,7 @@ async def test_one_display_switches_apps_and_rejects_lagging_source(hass, combin
 
 async def test_live_tv_never_looks_up_a_poster_and_routes_controls(hass, combined):
     entry, player = combined
+    player.options = {**player.options, "tmdb_enabled": True, "tmdb_token": "test-token"}
     with (
         patch(
             "custom_components.tivimuse.combined_display.tmdb_poster", new_callable=AsyncMock
@@ -130,11 +133,10 @@ async def test_live_tv_never_looks_up_a_poster_and_routes_controls(hass, combine
     foreground(hass, "com.nuvio.app")
     playback(hass, "com.nuvio.app", "A movie")
     await hass.async_block_till_done()
-    with patch.object(hass.services, "async_call", new_callable=AsyncMock) as call:
-        await player.async_media_pause()
-        call.assert_awaited_once_with(
-            "media_player", "media_pause", {"entity_id": SOURCE}, blocking=True
-        )
+    calls = async_mock_service(hass, "media_player", "media_pause")
+    await player.async_media_pause()
+    assert len(calls) == 1
+    assert calls[0].data["entity_id"] == SOURCE
 
 
 async def test_display_starts_when_tivimuse_is_closed(hass):
@@ -215,3 +217,37 @@ async def test_foreground_unavailable_does_not_keep_previous_media(hass, combine
     state = hass.states.get(DISPLAY)
     assert state.state == "unavailable"
     assert not state.attributes.get("media_title")
+
+
+async def test_late_poster_is_discarded_after_switching_apps(hass, combined):
+    _, player = combined
+    player.options = {**player.options, "tmdb_enabled": True, "tmdb_token": "test-token"}
+    entered, release = asyncio.Event(), asyncio.Event()
+    raw = BytesIO()
+    Image.new("RGBA", (200, 600), "red").save(raw, "PNG")
+
+    async def delayed(*args):
+        entered.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            # Model an I/O library that completes despite cancellation.
+            await release.wait()
+        return "https://image.tmdb.org/test-poster"
+
+    with (
+        patch("custom_components.tivimuse.combined_display.tmdb_poster", side_effect=delayed),
+        patch(
+            "custom_components.tivimuse.combined_display.fetch_artwork", return_value=raw.getvalue()
+        ),
+    ):
+        foreground(hass, "com.nuvio.app")
+        playback(hass, "com.nuvio.app", "Slow movie")
+        await entered.wait()
+        task = player._art_task
+        foreground(hass, "launcher")
+        await hass.async_block_till_done()
+        release.set()
+        await task
+        assert player.media_image_url is None
+        assert await player.async_get_media_image() == (None, None)
