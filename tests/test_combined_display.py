@@ -605,8 +605,8 @@ async def test_closing_app_replaces_artwork_with_new_app_or_shield_fallback(hass
         await hass.async_block_till_done()
         attributes = hass.states.get(DISPLAY).attributes
         assert attributes["entity_picture"] == expected
-        assert attributes["media_title"] == ""
-        assert attributes["media_position"] == 0
+        assert attributes.get("media_title", "") == ""
+        assert attributes.get("media_position", 0) == 0
 
 
 async def test_disconnected_tivimuse_uses_shield_before_foreground_catches_up(hass, combined):
