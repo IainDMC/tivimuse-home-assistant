@@ -130,6 +130,7 @@ async def test_live_tv_never_looks_up_a_poster_and_routes_controls(hass, combine
         await hass.async_block_till_done()
         assert hass.states.get(DISPLAY).attributes["media_title"] == "Next live programme"
         posters.assert_not_awaited()
+    player.options = {**player.options, "tmdb_enabled": False}
     foreground(hass, "com.nuvio.app")
     playback(hass, "com.nuvio.app", "A movie")
     await hass.async_block_till_done()
