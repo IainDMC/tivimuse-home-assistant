@@ -591,6 +591,7 @@ async def test_closing_app_clears_even_configured_fallback_artwork(hass, combine
         "fallback_logo": "/local/fallback.png",
         "app_logos": {"launcher": "/local/launcher.png"},
     }
+    player.refresh_artwork()
     foreground(hass, app)
     await hass.async_block_till_done()
     assert hass.states.get(DISPLAY).attributes["entity_picture"] == "/local/fallback.png"
