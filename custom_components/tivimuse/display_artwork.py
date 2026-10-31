@@ -131,7 +131,7 @@ async def fetch_artwork(session, url):
 
 
 def style_logo(data, scale=100, shape="square", background="transparent"):
-    """Apply the former channel-logo sizing/canvas controls to app-supplied artwork."""
+    """Fit channel logos with extra horizontal room and an unchanged height limit."""
     try:
         with Image.open(BytesIO(data)) as source:
             logo = source.convert("RGBA")
@@ -144,9 +144,12 @@ def style_logo(data, scale=100, shape="square", background="transparent"):
                 fitted = ImageOps.contain(logo, (480, 480), Image.Resampling.LANCZOS)
                 width, height = fitted.width + 32, fitted.height + 32
             size = max(10, min(100, scale)) / 100
+            # Wide wordmarks need more horizontal room than tall channel symbols.
+            # Keep the height set by the user; containment preserves proportions.
+            width_size = min(1.0, size * 1.2)
             fitted = ImageOps.contain(
                 logo,
-                (max(1, round((width - 32) * size)), max(1, round((height - 32) * size))),
+                (max(1, round((width - 32) * width_size)), max(1, round((height - 32) * size))),
                 Image.Resampling.LANCZOS,
             )
             automatic = (

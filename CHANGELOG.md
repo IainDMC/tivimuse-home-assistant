@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- Give wide channel logos 20% more horizontal room while preserving the selected height limit, aspect ratio and safe margins. Tall logos retain their existing size.
+
 ## 0.5.0
 
 - Show TiviMuse programme progress in the Remote 3 display in live and timeshift modes, using the programme start/end times instead of buffer size. Translate programme-bar seeks into available buffer coordinates. The native HA player retains its buffer controls.

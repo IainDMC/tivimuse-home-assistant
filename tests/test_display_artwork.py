@@ -25,6 +25,21 @@ class DisplayArtworkTest(unittest.TestCase):
         self.assertEqual(image.getpixel((0, 0)), (255, 255, 255, 255))
         self.assertEqual(image.getpixel((455, 256)), (0, 0, 0, 255))
 
+    def test_wide_logos_gain_width_without_enlarging_tall_logos(self):
+        for dimensions, expected in [((100, 400), (90, 360)), ((400, 100), (432, 108))]:
+            with self.subTest(dimensions=dimensions):
+                # Embedded transparent margins must not affect the visible size.
+                source = Image.new("RGBA", (dimensions[0] + 100, dimensions[1] + 100))
+                source.paste("white", (50, 50, dimensions[0] + 50, dimensions[1] + 50))
+                raw = BytesIO()
+                source.save(raw, "PNG")
+                data, _ = artwork.style_logo(raw.getvalue(), 75)
+                image = Image.open(BytesIO(data))
+                left, top, right, bottom = image.getbbox()
+                self.assertEqual((right - left, bottom - top), expected)
+                self.assertLessEqual(abs(left - (512 - right)), 1)
+                self.assertLessEqual(abs(top - (512 - bottom)), 1)
+
     def test_app_aliases_and_unknown_apps(self):
         for identity, expected in [
             ("app.opentv.debug", "tivimuse"),
