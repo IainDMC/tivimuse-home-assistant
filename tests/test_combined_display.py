@@ -315,3 +315,23 @@ async def test_native_playback_still_has_shield_volume_and_power(hass, combined)
     assert calls["volume_up"][0].data == {"entity_id": SOURCE}
     assert calls["volume_set"][0].data == {"entity_id": SOURCE, "volume_level": 0.3}
     assert calls["turn_off"][0].data == {"entity_id": SOURCE}
+
+
+async def test_generic_remote_player_without_android_app_id_supplies_media(hass, combined):
+    foreground(hass, "org.smarttube.stable")
+    hass.states.async_set(
+        SOURCE,
+        "playing",
+        {"media_title": "Current video", "media_artist": "Video creator", "media_position": 32},
+    )
+    await hass.async_block_till_done()
+    entity = hass.states.get(DISPLAY)
+    assert entity.state == "playing"
+    assert entity.attributes["media_title"] == "Current video"
+    assert entity.attributes["media_artist"] == "Video creator"
+    foreground(hass, "com.nuvio.tv")
+    hass.states.async_set(
+        SOURCE, "playing", {"media_title": "Current movie", "media_content_type": "movie"}
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(DISPLAY).attributes["media_title"] == "Current movie"

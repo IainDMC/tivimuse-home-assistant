@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- Accept generic selected media sources without an Android app ID, matching the original Remote 3 display behaviour. The separate foreground-app entity still identifies Nuvio and SmartTube. Explicit conflicting app IDs are rejected.
+- Document the native-player sound-mode setting required to avoid circular input when using Unfolded Circle playback metadata.
+
 ## 0.4.0
 
 - Restore Remote 3-style device-page switches, artwork selectors, sizing sliders, maintenance buttons and status sensors. Version 0.3.0 omitted these configuration platforms.

@@ -115,3 +115,9 @@ Home Assistant thumbnails depend on the channel's matched EPG artwork. The integ
 Run client contract tests with `python -m unittest discover -s tests -p test_client.py`. Run the full Home Assistant tests with the dependencies in `requirements-test.txt` on a supported Python/Linux environment. The workflow validates both repository structure and runtime integration setup.
 
 Licensed under GPL-3.0-or-later. Not affiliated with Unfolded Circle or Home Assistant.
+
+### Generic Remote 3 metadata sources
+
+A selected media source without an Android `app_id` is supported; the separate foreground-app entity identifies Nuvio or SmartTube. Explicitly conflicting app IDs are still rejected. If using the Unfolded Circle media-player facade as the source, set its sound mode to the native Android TV media player rather than Automatic selection or the display itself. This prevents the facade from feeding the combined display back into itself.
+
+To preserve existing Remote 3 activity assignments when replacing a removed legacy display, the new combined entity can be assigned the old entity ID in Home Assistant, provided that ID is free. Do not overwrite a still-registered legacy entity.
