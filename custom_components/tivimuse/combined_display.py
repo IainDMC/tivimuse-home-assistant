@@ -118,7 +118,10 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         if not state or state.state not in ACTIVE or self._kind not in ("nuvio", "smarttube"):
             return None
         identity = state.attributes.get("app_id") or state.attributes.get("app_name")
-        if identity and app_kind(identity) != self._kind:
+        source_kind = app_kind(state.attributes.get("app_id")) or app_kind(
+            state.attributes.get("app_name")
+        )
+        if identity and source_kind != self._kind:
             return None
         return state
 

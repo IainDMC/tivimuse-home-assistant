@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2
+
+- Correct native Cast metadata matching: a generic `AndroidNativeApp` ID no longer masks a recognized Nuvio or SmartTube app name. This was reproduced on the live source while Nuvio supplied Colony metadata. Known conflicting app identities remain rejected.
+
 ## 0.4.1
 
 - Accept generic selected media sources without an Android app ID, matching the original Remote 3 display behaviour. The separate foreground-app entity still identifies Nuvio and SmartTube. Explicit conflicting app IDs are rejected.

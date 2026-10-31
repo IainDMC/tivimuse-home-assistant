@@ -335,3 +335,24 @@ async def test_generic_remote_player_without_android_app_id_supplies_media(hass,
     )
     await hass.async_block_till_done()
     assert hass.states.get(DISPLAY).attributes["media_title"] == "Current movie"
+
+
+async def test_native_cast_app_id_uses_identifiable_app_name(hass, combined):
+    for package, name, title in [
+        ("com.nuvio.tv", "Nuvio", "Colony"),
+        ("org.smarttube.stable", "SmartTube", "Current video"),
+    ]:
+        foreground(hass, package)
+        hass.states.async_set(
+            SOURCE,
+            "paused",
+            {
+                "app_id": "AndroidNativeApp",
+                "app_name": name,
+                "media_title": title,
+                "media_artist": "2026",
+            },
+        )
+        await hass.async_block_till_done()
+        assert hass.states.get(DISPLAY).state == "paused"
+        assert hass.states.get(DISPLAY).attributes["media_title"] == title
