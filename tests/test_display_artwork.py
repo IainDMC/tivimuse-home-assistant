@@ -16,6 +16,15 @@ spec.loader.exec_module(artwork)
 
 
 class DisplayArtworkTest(unittest.TestCase):
+    def test_channel_icon_size_canvas_and_background_controls(self):
+        raw = BytesIO()
+        Image.new("RGBA", (600, 200), "black").save(raw, "PNG")
+        data, _ = artwork.style_logo(raw.getvalue(), 50, "16:9", "automatic")
+        image = Image.open(BytesIO(data))
+        self.assertEqual(image.size, (910, 512))
+        self.assertEqual(image.getpixel((0, 0)), (255, 255, 255, 255))
+        self.assertEqual(image.getpixel((455, 256)), (0, 0, 0, 255))
+
     def test_app_aliases_and_unknown_apps(self):
         for identity, expected in [
             ("app.opentv.debug", "tivimuse"),

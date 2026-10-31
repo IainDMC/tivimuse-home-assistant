@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 from io import BytesIO
 
 import aiohttp
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageFilter, ImageOps, ImageStat
 
 
 def app_kind(value):
@@ -107,6 +107,7 @@ async def fetch_artwork(session, url):
     """Read only explicit HTTP artwork, with timeout and memory bounds."""
     if not isinstance(url, str) or not url.startswith(("https://", "http://")):
         return None
+
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
             if response.status != 200:
@@ -120,3 +121,41 @@ async def fetch_artwork(session, url):
             return b"".join(chunks)
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return None
+
+
+def style_logo(data, scale=100, shape="square", background="transparent"):
+    """Apply the former channel-logo sizing/canvas controls to app-supplied artwork."""
+    try:
+        with Image.open(BytesIO(data)) as source:
+            logo = source.convert("RGBA")
+            bounds = logo.getbbox()
+            if not bounds:
+                return None, None
+            logo = logo.crop(bounds)
+            width, height = (910, 512) if shape == "16:9" else (512, 512)
+            if shape == "preserve":
+                fitted = ImageOps.contain(logo, (480, 480), Image.Resampling.LANCZOS)
+                width, height = fitted.width + 32, fitted.height + 32
+            size = max(10, min(100, scale)) / 100
+            fitted = ImageOps.contain(
+                logo,
+                (max(1, round((width - 32) * size)), max(1, round((height - 32) * size))),
+                Image.Resampling.LANCZOS,
+            )
+            automatic = (
+                "white"
+                if ImageStat.Stat(logo.convert("L"), logo.getchannel("A")).mean[0] < 128
+                else "black"
+            )
+            color = {"white": "white", "black": "black", "automatic": automatic}.get(
+                background, (0, 0, 0, 0)
+            )
+            canvas = Image.new("RGBA", (width, height), color)
+            canvas.alpha_composite(
+                fitted, ((width - fitted.width) // 2, (height - fitted.height) // 2)
+            )
+            result = BytesIO()
+            canvas.save(result, "PNG")
+            return result.getvalue(), "image/png"
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return None, None

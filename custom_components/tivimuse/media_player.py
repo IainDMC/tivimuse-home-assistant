@@ -30,9 +30,11 @@ from .const import DOMAIN
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = entry.runtime_data.coordinator
     native = TiviMusePlayer(coordinator)
+    entry.runtime_data.native = native
     entities = [native]
     if entry.options.get("combined_display"):
-        entities.append(TiviMuseRemoteDisplay(native, entry))
+        entry.runtime_data.display = TiviMuseRemoteDisplay(native, entry)
+        entities.append(entry.runtime_data.display)
     async_add_entities(entities)
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(

@@ -106,7 +106,9 @@ class DisplayOptionsFlow(config_entries.OptionsFlow):
                     ):
                         errors["base"] = "invalid_display_source"
             if not errors:
-                return self.async_create_entry(title="", data=user_input)
+                return self.async_create_entry(
+                    title="", data={**self.config_entry.options, **user_input}
+                )
         values = dict(self.config_entry.options)
         # Reuse compatible settings privately; never copy a guide URL or webhook.
         if not values:

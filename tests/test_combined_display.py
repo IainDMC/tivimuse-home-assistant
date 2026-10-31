@@ -12,6 +12,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 
 from custom_components.tivimuse.api import DeviceUnavailable
 from custom_components.tivimuse.const import CONF_TOKEN, DOMAIN
+from custom_components.tivimuse.display_controls import BUTTONS, NUMBERS, SELECTS, SENSORS, SWITCHES
 
 DEVICE = "combined-test-device"
 SOURCE = "media_player.shield_metadata"
@@ -252,3 +253,65 @@ async def test_late_poster_is_discarded_after_switching_apps(hass, combined):
         await task
         assert player.media_image_url is None
         assert await player.async_get_media_image() == (None, None)
+
+
+async def test_device_page_controls_exist_and_apply_without_reloading(hass, combined):
+    entry, player = combined
+    registry = er.async_get(hass)
+    all_controls = {**SWITCHES, **SELECTS, **NUMBERS, **BUTTONS, **SENSORS}
+    entities = {}
+    for key in all_controls:
+        matching = [
+            e
+            for e in registry.entities.values()
+            if e.config_entry_id == entry.entry_id and e.unique_id == f"{DEVICE}_display_{key}"
+        ]
+        assert len(matching) == 1, key
+        entities[key] = matching[0].entity_id
+        assert hass.states.get(matching[0].entity_id) is not None
+    coordinator = entry.runtime_data.coordinator
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": entities["show_program_as_title"]}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert entry.runtime_data.coordinator is coordinator
+    assert player is entry.runtime_data.display
+    assert not hass.states.get(DISPLAY).attributes.get("media_title")
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": entities["show_progress"]}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert not hass.states.get(DISPLAY).attributes.get("media_duration")
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {"entity_id": entities["channel_icon_scale"], "value": 65},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": entities["icon_background"], "option": "black"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert player.options["channel_icon_scale"] == 65
+    assert player.options["icon_background"] == "black"
+    await hass.services.async_call(
+        "button", "press", {"entity_id": entities["clear_artwork_cache"]}, blocking=True
+    )
+    assert hass.states.get(entities["native_connection"]).state == "Connected"
+
+
+async def test_native_playback_still_has_shield_volume_and_power(hass, combined):
+    _, player = combined
+    calls = {
+        name: async_mock_service(hass, "media_player", name)
+        for name in ("volume_up", "volume_set", "turn_off")
+    }
+    await player.async_volume_up()
+    await player.async_set_volume_level(0.3)
+    await player.async_turn_off()
+    assert calls["volume_up"][0].data == {"entity_id": SOURCE}
+    assert calls["volume_set"][0].data == {"entity_id": SOURCE, "volume_level": 0.3}
+    assert calls["turn_off"][0].data == {"entity_id": SOURCE}

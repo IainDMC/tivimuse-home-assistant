@@ -78,6 +78,22 @@ The combined display continues working for Nuvio and SmartTube when TiviMuse is 
 
 Media controls target the selected app's source. TiviMuse channel actions always use the exact stable channel ID. Power/wake and volume for TiviMuse remain on the existing Shield/Android TV integration. This integration does not launch closed apps automatically.
 
+### Device-page controls
+
+The TiviMuse device page includes the combined display's configuration entities:
+
+- Switches for TiviMuse detection, programme title, channel name, progress, next programme, blurred posters and TMDB artwork.
+- Per-app preferred/fallback artwork selectors, plus channel-icon canvas shape and background.
+- Sliders for channel-icon size, poster-canvas width and TMDB title matching.
+- Refresh TiviMuse data, clear artwork cache and test-artwork buttons.
+- Diagnostic sensors for the active app, selected artwork source, Nuvio content type and native connection.
+
+Presentation changes apply live and persist without reloading the native connection. Power, volume, mute and volume-step commands use the Shield source even during TiviMuse playback; supported play/pause/seek controls use TiviMuse's API. Nuvio/SmartTube retain their source player's stop, skip, seek and playback controls.
+
+The old XMLTV download, playlist matching and screen-observer settings are intentionally replaced by the native TiviMuse connection. They are not needed to supply programme information or logos.
+
+**Remote 3 must use the new combined entity.** Updating HACS does not replace an old activity's selected entity automatically. Add/select the TiviMuse Remote 3 display in the remote's Home Assistant integration and activity; selecting the Shield's ordinary TV Room player still displays only that source's information. Keep the original native TiviMuse entity for channel-selection automations.
+
 ### Artwork and updates
 
 Logos come from TiviMuse through Home Assistant's token-protected media image proxy. They are fitted inside a transparent square with safe margins. A five-minute memory cache avoids repeated logo downloads; slow old-channel responses cannot replace the current logo. Posters are loaded on media changes, not position ticks. Failed artwork falls back to the next configured choice.

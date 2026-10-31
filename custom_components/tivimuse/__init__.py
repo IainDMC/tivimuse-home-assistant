@@ -18,6 +18,19 @@ from .coordinator import TiviMuseCoordinator
 @dataclass
 class RuntimeData:
     coordinator: TiviMuseCoordinator
+    native: object = None
+    display: object = None
+    options: dict = None
+
+
+DISPLAY_PLATFORMS = [
+    Platform.SWITCH,
+    Platform.SELECT,
+    Platform.NUMBER,
+    Platform.BUTTON,
+    Platform.SENSOR,
+]
+PLATFORMS = [Platform.MEDIA_PLAYER, *DISPLAY_PLATFORMS]
 
 
 async def async_setup_entry(hass, entry: ConfigEntry) -> bool:
@@ -49,19 +62,33 @@ async def async_setup_entry(hass, entry: ConfigEntry) -> bool:
         coordinator.async_set_update_error(UpdateFailed("TiviMuse is not reachable"))
     else:
         await coordinator.async_config_entry_first_refresh()
-    entry.runtime_data = RuntimeData(coordinator)
+    entry.runtime_data = RuntimeData(coordinator, options=dict(entry.options))
     await hass.config_entries.async_forward_entry_setups(entry, [Platform.MEDIA_PLAYER])
+    await hass.config_entries.async_forward_entry_setups(entry, DISPLAY_PLATFORMS)
     coordinator.start()
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
 
 
 async def async_reload_entry(hass, entry):
+    runtime = entry.runtime_data
+    changed = {
+        key
+        for key in runtime.options.keys() | entry.options.keys()
+        if runtime.options.get(key) != entry.options.get(key)
+    }
+    if runtime.display and not changed.intersection(
+        {"combined_display", "source_entity", "app_entity"}
+    ):
+        runtime.options = dict(entry.options)
+        runtime.display.options = entry.options
+        runtime.display.refresh_artwork()
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass, entry: ConfigEntry) -> bool:
-    if await hass.config_entries.async_unload_platforms(entry, [Platform.MEDIA_PLAYER]):
+    if await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         await entry.runtime_data.coordinator.stop()
         return True
     return False

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Restore Remote 3-style device-page switches, artwork selectors, sizing sliders, maintenance buttons and status sensors. Version 0.3.0 omitted these configuration platforms.
+- Apply display options live without interrupting the native connection; preserve them when changing connection/source options.
+- Restore Shield power, volume, mute and volume-step forwarding during TiviMuse playback.
+- Add channel-logo size, shape and automatic/black/white/transparent background rendering.
+- Document the separate Remote 3 activity/entity selection step: the new Home Assistant entity does not automatically replace the old TV Room source on the remote.
+
 ## 0.3.0
 
 - Add an optional single Remote 3 display for TiviMuse, Nuvio and SmartTube, with foreground-app switching and app-specific controls.

@@ -7,7 +7,11 @@ import hashlib
 from urllib.parse import urljoin
 
 import aiohttp
-from homeassistant.components.media_player import MediaPlayerEntity, MediaPlayerEntityFeature
+from homeassistant.components.media_player import (
+    MediaPlayerDeviceClass,
+    MediaPlayerEntity,
+    MediaPlayerEntityFeature,
+)
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
@@ -17,7 +21,14 @@ from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .display_artwork import app_kind, fetch_artwork, fit_poster, nuvio_type, tmdb_poster
+from .display_artwork import (
+    app_kind,
+    fetch_artwork,
+    fit_poster,
+    nuvio_type,
+    style_logo,
+    tmdb_poster,
+)
 
 ACTIVE = {"playing", "paused", "buffering"}
 FORWARDED = (
@@ -29,6 +40,16 @@ FORWARDED = (
     | MediaPlayerEntityFeature.PREVIOUS_TRACK
     | MediaPlayerEntityFeature.VOLUME_SET
     | MediaPlayerEntityFeature.VOLUME_MUTE
+    | MediaPlayerEntityFeature.VOLUME_STEP
+    | MediaPlayerEntityFeature.TURN_ON
+    | MediaPlayerEntityFeature.TURN_OFF
+)
+DEVICE_CONTROLS = (
+    MediaPlayerEntityFeature.VOLUME_SET
+    | MediaPlayerEntityFeature.VOLUME_MUTE
+    | MediaPlayerEntityFeature.VOLUME_STEP
+    | MediaPlayerEntityFeature.TURN_ON
+    | MediaPlayerEntityFeature.TURN_OFF
 )
 
 
@@ -36,6 +57,7 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
     _attr_has_entity_name = True
     _attr_name = "Remote 3 display"
     _attr_should_poll = False
+    _attr_device_class = MediaPlayerDeviceClass.TV
     _attr_media_image_remotely_accessible = False
 
     def __init__(self, native, entry):
@@ -49,6 +71,9 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         self._art_key = None
         self._art_image = None
         self._image_revision = 0
+        self._logo_style_key = None
+        self._styled_logo = None
+        self.artwork_source = "None"
 
     async def async_added_to_hass(self):
         self.async_on_remove(
@@ -82,7 +107,10 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         # Foreground identity is authoritative; do not let a stale media title choose the app.
         attrs = state.attributes
         identity = attrs.get("app_id") or attrs.get("source") or attrs.get("app_name")
-        return app_kind(identity)
+        kind = app_kind(identity)
+        return (
+            None if kind == "tivimuse" and not self.options.get("tivimuse_enabled", True) else kind
+        )
 
     @property
     def _source(self):
@@ -103,11 +131,15 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
     @property
     def available(self):
         if not self._foreground:
-            return False
+            state = self.hass.states.get(self._app_id)
+            return bool(state and state.state == "off")
         return self.native.available if self._kind == "tivimuse" else True
 
     @property
     def state(self):
+        app = self.hass.states.get(self._app_id)
+        if app and app.state == "off":
+            return "off"
         if self._kind == "tivimuse":
             return self.native.state
         return self._source.state if self._source else "idle"
@@ -123,10 +155,14 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     @property
     def media_title(self):
+        if self._kind == "tivimuse" and not self.options.get("show_program_as_title", True):
+            return None
         return self._attribute("media_title")
 
     @property
     def media_artist(self):
+        if self._kind == "tivimuse" and not self.options.get("show_channel_as_artist", True):
+            return None
         return self._attribute("media_artist")
 
     @property
@@ -143,37 +179,63 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     @property
     def media_duration(self):
-        return self._attribute("media_duration")
+        return (
+            self._attribute("media_duration") if self.options.get("show_progress", True) else None
+        )
 
     @property
     def media_position(self):
-        return self._attribute("media_position")
+        return (
+            self._attribute("media_position") if self.options.get("show_progress", True) else None
+        )
 
     @property
     def media_position_updated_at(self):
+        if not self.options.get("show_progress", True):
+            return None
         value = self._attribute("media_position_updated_at")
         return dt_util.parse_datetime(value) if isinstance(value, str) else value
 
     @property
     def volume_level(self):
-        return self._attribute("volume_level")
+        state = self.hass.states.get(self._source_id)
+        return state.attributes.get("volume_level") if state else None
 
     @property
     def is_volume_muted(self):
-        return self._attribute("is_volume_muted")
+        state = self.hass.states.get(self._source_id)
+        return state.attributes.get("is_volume_muted") if state else None
 
     @property
     def supported_features(self):
         if not self.available:
             return MediaPlayerEntityFeature(0)
         if self._kind == "tivimuse":
-            return self.native.supported_features
-        return MediaPlayerEntityFeature(self._attribute("supported_features") or 0) & FORWARDED
+            source = self.hass.states.get(self._source_id)
+            return self.native.supported_features | (
+                MediaPlayerEntityFeature(source.attributes.get("supported_features", 0))
+                & DEVICE_CONTROLS
+                if source
+                else 0
+            )
+        source = self.hass.states.get(self._source_id)
+        device = (
+            MediaPlayerEntityFeature(source.attributes.get("supported_features", 0))
+            & DEVICE_CONTROLS
+            if source
+            else 0
+        )
+        return (
+            MediaPlayerEntityFeature(self._attribute("supported_features") or 0) & FORWARDED
+        ) | device
 
     @property
     def extra_state_attributes(self):
         if self._kind == "tivimuse" and self.available:
-            return {**self.native.extra_state_attributes, "display_app": "TiviMuse"}
+            data = {**self.native.extra_state_attributes, "display_app": "TiviMuse"}
+            if not self.options.get("show_next_program", True):
+                data.pop("next_programme", None)
+            return data
         return {
             "display_app": self.app_name,
             "nuvio_content_type": nuvio_type(self._source.attributes)
@@ -200,11 +262,21 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     @callback
     def _changed(self, event=None):
+        self.artwork_source = (
+            "TiviMuse EPG logo"
+            if self._kind == "tivimuse" and self.native.media_image_url
+            else self.artwork_source
+        )
         key = self._artwork_key()
         if key != self._art_key:
             self._cancel_artwork()
             self._art_key = key
             self._art_image = None
+            self.artwork_source = (
+                "TiviMuse EPG logo"
+                if self._kind == "tivimuse" and self.native.media_image_url
+                else "None"
+            )
             self._image_revision += 1
             if key:
                 self._art_task = self.hass.async_create_background_task(
@@ -212,6 +284,14 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
                     "TiviMuse Remote 3 artwork",
                 )
         self.async_write_ha_state()
+
+    @callback
+    def refresh_artwork(self):
+        self._art_key = None
+        self._logo_style_key = None
+        self._styled_logo = None
+        self._image_revision += 1
+        self._changed()
 
     async def _load_artwork(self, key):
         """Resolve artwork once per media change, never on playback-position ticks."""
@@ -222,7 +302,11 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         result = None, None
         for choice in dict.fromkeys((primary, fallback)):
             data = None
-            if choice == "tmdb_poster" and self.options.get("tmdb_enabled"):
+            if (
+                choice == "tmdb_poster"
+                and self.options.get("tmdb_enabled")
+                and self.options.get("tmdb_for_other_apps", True)
+            ):
                 # Live TV cannot enter this path: _artwork_key requires Nuvio/SmartTube.
                 title = key[4] if key[5] == "Episode" and key[4] else key[1]
                 url = await tmdb_poster(
@@ -265,6 +349,8 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
                     self.options.get("poster_canvas_width", 100),
                 )
             if result[0]:
+                if key == self._artwork_key():
+                    self.artwork_source = choice
                 break
         if key == self._artwork_key():
             self._art_image = result if result[0] else None
@@ -274,7 +360,8 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
     @property
     def media_image_url(self):
         if self._kind == "tivimuse":
-            return self.native.media_image_url if self.available else None
+            url = self.native.media_image_url if self.available else None
+            return f"{url}/display/{self._image_revision}" if url else None
         if self._art_image and self._art_key == self._artwork_key():
             digest = hashlib.sha256(repr(self._art_key).encode()).hexdigest()[:16]
             return f"tivimuse://display/{digest}/{self._image_revision}"
@@ -283,12 +370,37 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
     async def async_get_media_image(self, width=None, height=None):
         if self._kind == "tivimuse" and self.available:
             image = await self.native.async_get_media_image()
-            return image if self._kind == "tivimuse" else (None, None)
+            if self._kind != "tivimuse" or not image or not image[0]:
+                return None, None
+            key = (
+                hash(image[0]),
+                self.options.get("channel_icon_scale", 100),
+                self.options.get("icon_canvas_shape", "square"),
+                self.options.get("icon_background", "transparent"),
+            )
+            if key != self._logo_style_key:
+                styled = await self.hass.async_add_executor_job(style_logo, image[0], *key[1:])
+                if self._kind != "tivimuse":
+                    return None, None
+                self._logo_style_key, self._styled_logo = key, styled
+            return self._styled_logo
         if self._art_key == self._artwork_key():
             return self._art_image or (None, None)
         return None, None
 
     async def _command(self, service, **data):
+        if service in (
+            "volume_set",
+            "volume_mute",
+            "volume_up",
+            "volume_down",
+            "turn_on",
+            "turn_off",
+        ):
+            await self.hass.services.async_call(
+                "media_player", service, {"entity_id": self._source_id, **data}, blocking=True
+            )
+            return
         if not self.available:
             raise HomeAssistantError("The active display source is unavailable")
         if self._kind == "tivimuse":
@@ -333,6 +445,18 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     async def async_mute_volume(self, mute):
         await self._command("volume_mute", is_volume_muted=mute)
+
+    async def async_volume_up(self):
+        await self._command("volume_up")
+
+    async def async_volume_down(self):
+        await self._command("volume_down")
+
+    async def async_turn_on(self):
+        await self._command("turn_on")
+
+    async def async_turn_off(self):
+        await self._command("turn_off")
 
     async def async_play_media(self, media_type, media_id, **kwargs):
         # Explicit stable channel IDs always address TiviMuse, never the foreground VOD app.
