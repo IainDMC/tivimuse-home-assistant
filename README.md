@@ -61,23 +61,32 @@ Use `tivimuse.jump_live` with the same entity target to return to live. During l
 
 ## Remote 3 display (included)
 
-Use the existing **TiviMuse media-player entity** in Remote 3's Home Assistant integration. There is no additional display integration to install and no second pairing step. Existing entity IDs and automations are preserved by this update.
+The native TiviMuse media player supplies programme titles, channel subtitles (`media_artist`), playlist information, current/next programmes, progress and logos directly from TiviMuse. It requires no guide download, webhook or screen observer. Existing entity IDs, settings and automations are preserved.
 
-1. Update TiviMuse in HACS and restart Home Assistant.
-2. In the Remote 3 configurator, open its Home Assistant integration and add your TiviMuse media-player entity to the remote/activity. If already added, keep that entity.
-3. Use that entity for the media display and play/pause controls. Replace the old generic display entity in your activity when ready; it is not removed automatically.
+### One display for TiviMuse, Nuvio and SmartTube
 
-The programme title is the main title; the channel name is the subtitle (`media_artist`). The playlist is also exposed as `media_album_name`. Channel selection uses the existing stable channel IDs, including duplicate names in different playlists.
+1. Update **TiviMuse** in HACS and restart Home Assistant.
+2. Open **Settings → Devices & services → TiviMuse → Configure**. Enable **Combined Remote 3 display**.
+3. Choose the Shield's playback metadata media player and its foreground-app media player (usually the Android TV/ADB entity). These are the underlying Shield entities, not a TiviMuse entity or the old display entity. They may be the same entity if it provides both functions.
+4. If exactly one old Remote 3 Display config entry exists, compatible source/artwork settings are suggested privately, including its optional TMDB token. Check these before saving. No XMLTV URLs, provider logins or observer settings are copied.
+5. Add the new **TiviMuse Remote 3 display** media player to Remote 3 through its Home Assistant integration. Use it for the display and playback controls in your activity. The original TiviMuse media player remains available for automations and exact channel selection.
+6. After testing all three apps, disable/remove the old display integration yourself if you no longer need it. It is not altered automatically.
 
-Channel artwork comes directly from TiviMuse's matched EPG logo through Home Assistant's token-protected media image proxy. It is fitted inside a transparent square with safe margins so wide logos remain complete. A small, five-minute memory cache avoids repeated image downloads. Missing or invalid artwork is omitted; a slow response from a previous channel cannot replace the current channel's artwork.
+The foreground app selects the display. TiviMuse supplies its own current programme and matched EPG logo. Nuvio and SmartTube retain the playback source's title, subtitle, progress and controls, with per-app primary/fallback artwork choices: source artwork, optional TMDB movie/show posters, or an app logo. Nuvio movie/episode/trailer classification is exposed as an attribute. Poster fitting, optional blurred backgrounds, canvas width and title-match threshold are configurable. TMDB searches are disabled by default unless explicitly enabled or reused from your existing settings, and are never used for TiviMuse.
 
-Programme and next-programme changes are published from TiviMuse's local state connection, even when the channel stays the same. The display does not download XMLTV, inspect the screen, fetch movie posters or infer programme changes independently. Update timing depends on the companion APK sending its revised programme metadata. No separate webhook, observer app or guide credentials are required.
+The combined display continues working for Nuvio and SmartTube when TiviMuse is closed or unreachable. When foreground and media metadata arrive at different times, mismatched old titles/artwork are cleared until the new app's metadata arrives. Turning off/unavailable foreground detection clears the display. A source without an identifiable matching app is not treated as current media.
 
-Playing, paused and buffering retain the current information. Stopping clears programme/channel artwork; disconnecting marks the entity unavailable, and reconnecting restores the latest state. Missing programme data falls back to the channel name. Live programme progress and timeshift progress retain their existing meanings.
+Media controls target the selected app's source. TiviMuse channel actions always use the exact stable channel ID. Power/wake and volume for TiviMuse remain on the existing Shield/Android TV integration. This integration does not launch closed apps automatically.
 
-Remote 3's Home Assistant connection determines which fields and controls appear on its screen. This integration supplies standard Home Assistant media-player fields; it does not replace the remote's firmware or display layout. The remote must be able to reach Home Assistant's configured address to fetch artwork.
+### Artwork and updates
 
-The optional legacy webhook reporter may remain enabled for other automations. It is independent of this display path.
+Logos come from TiviMuse through Home Assistant's token-protected media image proxy. They are fitted inside a transparent square with safe margins. A five-minute memory cache avoids repeated logo downloads; slow old-channel responses cannot replace the current logo. Posters are loaded on media changes, not position ticks. Failed artwork falls back to the next configured choice.
+
+Programme updates arrive whenever TiviMuse publishes changed metadata, including changes on the same channel. Timing depends on the installed companion APK. The display does not independently infer programme changes or download a guide.
+
+Remote 3's Home Assistant connection determines the on-screen layout and supported controls. This integration supplies standard media-player fields; it does not replace the remote's firmware. Remote 3 must be able to reach Home Assistant's configured address to fetch artwork. Optional app-logo URLs support HTTP(S) or Home Assistant `/local/` paths.
+
+The optional legacy webhook reporter can remain enabled for other automations. It is independent of this display path.
 
 ## Validation and limitations
 

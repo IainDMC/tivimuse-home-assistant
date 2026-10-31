@@ -23,12 +23,17 @@ from homeassistant.util import dt as dt_util
 
 from .api import TiviMuseError
 from .artwork import fit_logo
+from .combined_display import TiviMuseRemoteDisplay
 from .const import DOMAIN
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = entry.runtime_data.coordinator
-    async_add_entities([TiviMusePlayer(coordinator)])
+    native = TiviMusePlayer(coordinator)
+    entities = [native]
+    if entry.options.get("combined_display"):
+        entities.append(TiviMuseRemoteDisplay(native, entry))
+    async_add_entities(entities)
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         "play_channel", {vol.Required("channel_id"): cv.string}, "async_play_channel"

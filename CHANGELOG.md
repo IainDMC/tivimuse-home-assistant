@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Add an optional single Remote 3 display for TiviMuse, Nuvio and SmartTube, with foreground-app switching and app-specific controls.
+- Keep the combined display available for Nuvio/SmartTube while TiviMuse is closed.
+- Preserve optional TMDB posters, source artwork, app logos, fitted posters and blurred backgrounds for Nuvio/SmartTube. TiviMuse uses only its own programme data and logos.
+- Suggest compatible settings from one existing legacy display entry privately, without importing guide feeds or observer configuration.
+- Reject stale cross-app metadata and artwork when foreground/source updates arrive out of order.
+- Keep existing native media-player identities, pairing and automations intact.
+
 ## 0.2.0
 
 - Include Remote 3 display support in the existing TiviMuse media player: programme title, channel subtitle and playlist metadata.

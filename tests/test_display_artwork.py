@@ -1,0 +1,55 @@
+"""Content classification and complete, uncropped movie artwork."""
+
+import importlib.util
+import unittest
+from io import BytesIO
+from pathlib import Path
+
+from PIL import Image
+
+spec = importlib.util.spec_from_file_location(
+    "display_artwork",
+    Path(__file__).parents[1] / "custom_components/tivimuse/display_artwork.py",
+)
+artwork = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(artwork)
+
+
+class DisplayArtworkTest(unittest.TestCase):
+    def test_app_aliases_and_unknown_apps(self):
+        for identity, expected in [
+            ("app.opentv.debug", "tivimuse"),
+            ("app.tivimuse", "tivimuse"),
+            ("com.nuvio.app", "nuvio"),
+            ("com.teamsmart.videomanager.tv", "smarttube"),
+            ("com.liskovsoft.smarttubetv.beta", "smarttube"),
+            ("launcher", None),
+        ]:
+            self.assertEqual(artwork.app_kind(identity), expected)
+
+    def test_nuvio_movie_episode_and_trailer(self):
+        for attrs, expected in [
+            ({"media_content_type": "movie"}, "Movie"),
+            ({"media_season": 0}, "Episode"),
+            ({"media_artist": "S01:E03"}, "Episode"),
+            ({"is_trailer": True, "media_content_type": "movie"}, "Trailer"),
+            ({"media_artist": "2026"}, "Movie"),
+            ({}, "Unknown"),
+        ]:
+            self.assertEqual(artwork.nuvio_type(attrs), expected)
+
+    def test_fitted_posters_preserve_all_edges(self):
+        for size in [(200, 600), (600, 200)]:
+            raw = BytesIO()
+            Image.new("RGBA", size, "white").save(raw, "PNG")
+            data, content_type = artwork.fit_poster(raw.getvalue(), False, 150)
+            result = Image.open(BytesIO(data))
+            self.assertEqual(result.size, (768, 512))
+            self.assertEqual(content_type, "image/png")
+            left, top, right, bottom = result.getbbox()
+            self.assertGreaterEqual(left, 16)
+            self.assertGreaterEqual(top, 16)
+            self.assertLessEqual(right, 752)
+            self.assertLessEqual(bottom, 496)
+            self.assertAlmostEqual((right - left) / (bottom - top), size[0] / size[1], places=2)
+        self.assertEqual(artwork.fit_poster(b"broken image"), (None, None))

@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect to TiviMuse",
-        "description": "Enable local control in TiviMuse Settings → Home Assistant, then enter its address, port and pairing key. Keep TiviMuse open while pairing.",
+        "description": "Enable local control in TiviMuse Settings â†’ Home Assistant, then enter its address, port and pairing key. Keep TiviMuse open while pairing.",
         "data": {
           "host": "Device hostname or IP address",
           "port": "Local API port",
@@ -54,6 +54,43 @@
     "jump_live": {
       "name": "Jump to live",
       "description": "Return to normal live playback."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Remote 3 combined display",
+        "description": "Enable one display for TiviMuse, Nuvio and SmartTube. Select the Shield media player for playback metadata and its Android TV/ADB media player for the foreground app. Existing compatible display settings are suggested when one legacy display entry is found. TiviMuse always supplies its own guide data and logo. TMDB is optional and only used for Nuvio/SmartTube.",
+        "data": {
+          "combined_display": "Enable combined Remote 3 display",
+          "source_entity": "Shield playback metadata media player",
+          "app_entity": "Shield foreground app media player",
+          "tmdb_enabled": "Use TMDB posters for Nuvio and SmartTube",
+          "tmdb_token": "TMDB API read access token",
+          "tmdb_language": "TMDB language",
+          "poster_blurred_background": "Blurred background behind fitted posters",
+          "nuvio_artwork": "Nuvio artwork",
+          "nuvio_fallback_artwork": "Nuvio fallback artwork",
+          "nuvio_logo": "Nuvio app logo URL (optional)",
+          "smarttube_artwork": "SmartTube artwork",
+          "smarttube_fallback_artwork": "SmartTube fallback artwork",
+          "smarttube_logo": "SmartTube app logo URL (optional)",
+          "tmdb_minimum_match": "Minimum poster title match (%)",
+          "poster_canvas_width": "Poster canvas width (%)"
+        }
+      }
+    },
+    "error": {
+      "invalid_display_source": "Select the underlying Shield media players, not a TiviMuse or old display entity. Both selected entities must exist."
+    }
+  },
+  "selector": {
+    "display_artwork": {
+      "options": {
+        "tmdb_poster": "TMDB poster",
+        "source_artwork": "Playback source artwork",
+        "app_logo": "App logo"
+      }
     }
   }
 }
