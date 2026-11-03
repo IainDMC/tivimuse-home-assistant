@@ -167,7 +167,7 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
             f"tivimuse://logo/{self.media_content_id}"
             if self.media_content_id and self.coordinator.data.get("logo_available")
             else APP_ICON_URL
-            if self.available and self.coordinator.data.get("foreground")
+            if self.available and self.coordinator.data.get("foreground") and self.coordinator.data.get("state") == "idle"
             else None
         )
 

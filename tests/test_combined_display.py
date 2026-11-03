@@ -617,7 +617,7 @@ async def test_disconnected_tivimuse_uses_shield_before_foreground_catches_up(ha
         "fallback_logo": "/local/icons/tv.png",
     }
     player.refresh_artwork()
-    assert hass.states.get(DISPLAY).attributes["entity_picture"] == "/local/tivimuse.png"
+    assert not hass.states.get(DISPLAY).attributes.get("entity_picture")
     entry.runtime_data.coordinator.async_set_update_error(DeviceUnavailable("closed"))
     await hass.async_block_till_done()
     assert hass.states.get(DISPLAY).attributes["entity_picture"] == "/local/icons/tv.png"
@@ -642,3 +642,53 @@ async def test_foreground_idle_tivimuse_uses_bundled_app_icon_not_stale_channel(
     foreground(hass, "launcher")
     await hass.async_block_till_done()
     assert player.media_image_url != APP_ICON_URL
+
+
+async def test_channel_handoff_keeps_previous_metadata_and_icon_until_next_ready(hass, combined):
+    entry, player = combined
+    red, blue = BytesIO(), BytesIO()
+    Image.new("RGBA", (200, 200), "red").save(red, "PNG")
+    Image.new("RGBA", (200, 200), "blue").save(blue, "PNG")
+    entered, release = asyncio.Event(), asyncio.Event()
+    first = NATIVE["channel_id"]
+
+    async def logo():
+        if player.native.media_content_id == first:
+            return red.getvalue(), "image/png"
+        entered.set()
+        await release.wait()
+        return blue.getvalue(), "image/png"
+
+    with patch.object(player.native, "async_get_media_image", side_effect=logo):
+        entry.runtime_data.coordinator.async_set_updated_data({**NATIVE, "logo_available": True})
+        await player._native_art_task
+        previous_url = player.media_image_url
+        previous_title = player.media_title
+        next_channel = {**NATIVE, "channel_id": "tmc1:next", "channel": "Next channel",
+                        "logo_available": True, "programme": {"title": "Next show"}}
+        entry.runtime_data.coordinator.async_set_updated_data({**next_channel, "state": "buffering"})
+        await entered.wait()
+        assert player.media_image_url == previous_url
+        assert player.media_title == previous_title
+        entry.runtime_data.coordinator.async_set_updated_data(next_channel)
+        assert player.media_image_url == previous_url
+        assert player.media_title == previous_title
+        data, _ = await player.async_get_media_image()
+        assert Image.open(BytesIO(data)).getpixel((256,256)) == (255,0,0,255)
+        release.set()
+        await player._native_art_task
+        assert player.media_title == "Next show"
+        assert player.media_image_url != previous_url
+        data, _ = await player.async_get_media_image()
+        assert Image.open(BytesIO(data)).getpixel((256,256)) == (0,0,255,255)
+
+
+async def test_playing_channel_without_logo_does_not_use_app_icon(hass, combined):
+    entry, player = combined
+    from custom_components.tivimuse.brand_artwork import APP_ICON_URL
+
+    entry.runtime_data.coordinator.async_set_updated_data({**NATIVE, "logo_available": False, "foreground": True})
+    await hass.async_block_till_done()
+    assert player.media_image_url is None
+    assert player.media_image_url != APP_ICON_URL
+    assert player.media_title == "Native programme"

@@ -1,3 +1,9 @@
+## 0.5.6
+
+- Keep the previous channel's programme information and ready logo during a channel change, then promote the next channel's metadata and artwork together.
+- Reserve the stacked TiviMuse app icon for foreground idle state; never substitute it for a playing channel's missing or loading logo.
+- Keep clearing stale channel data on app switches and disconnection, with bounded handling of failed new-logo downloads.
+
 ## 0.5.5
 
 - Correct the idle TiviMuse app icon to the transparent stacked tv/tivimuse wordmark.

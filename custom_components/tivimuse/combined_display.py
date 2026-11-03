@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
+from copy import deepcopy
 from datetime import timedelta
 from urllib.parse import urljoin
 
@@ -83,6 +84,11 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         self._native_art_task = None
         self._native_art_key = None
         self._native_art_image = None
+        self._native_display = None
+        self._native_display_image = None
+        self._native_display_key = None
+        self._native_display_revision = 0
+        self._native_logo_failed_key = None
 
     async def async_added_to_hass(self):
         self.async_on_remove(
@@ -158,7 +164,7 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     def _attribute(self, name):
         if self._kind == "tivimuse":
-            return getattr(self.native, name, None) if self.native.available else None
+            return self._native_display["values"].get(name) if self.native.available and self._native_display else None
         source = self._source
         return source.attributes.get(name) if source else None
 
@@ -267,9 +273,9 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     @property
     def _programme_window(self):
-        if self._kind != "tivimuse" or not self.native.available or self.native.state not in ACTIVE:
+        if self._kind != "tivimuse" or not self.native.available or not self._native_display:
             return None
-        programme = self.native.coordinator.data.get("programme") or {}
+        programme = self._native_display.get("programme") or {} if self._native_display else {}
         start, end = programme.get("start_ms"), programme.get("end_ms")
         if (
             isinstance(start, (int, float))
@@ -328,7 +334,7 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
     @property
     def extra_state_attributes(self):
         if self._kind == "tivimuse" and self.native.available:
-            data = {**self.native.extra_state_attributes, "display_app": "TiviMuse"}
+            data = {**(self._native_display["extra"] if self._native_display else {}), "display_app": "TiviMuse"}
             if not self.options.get("show_next_program", True):
                 data.pop("next_programme", None)
             return data
@@ -362,6 +368,8 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
 
     def _native_image_key(self):
         if self._kind != "tivimuse" or not self.native.available or self.native.state not in ACTIVE:
+            return None
+        if not self.native.media_content_id or not self.native.coordinator.data.get("logo_available"):
             return None
         url = self.native.media_image_url
         return (
@@ -445,6 +453,39 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
                     return self._app_logo()
         return self._app_logo()
 
+    def _commit_native_display(self):
+        """Promote channel metadata and ready image together; never expose an in-flight icon."""
+        if self._kind != "tivimuse" or not self.native.available:
+            self._native_display = self._native_display_image = self._native_display_key = None
+            return
+        raw = self.native.coordinator.data
+        if raw.get("foreground") is False:
+            self._native_display = self._native_display_image = self._native_display_key = None
+            return
+        channel = raw.get("channel_id")
+        changing = self._native_display and channel and channel != self._native_display["channel_id"]
+        if self._native_display and (self.native.state == "buffering" or raw.get("state") == "error" or
+                (raw.get("state") == "idle" and changing)):
+            return
+        if self.native.state not in ("playing", "paused"):
+            self._native_display = self._native_display_image = self._native_display_key = None
+            return
+        key = self._native_image_key()
+        if key and key != self._native_logo_failed_key and (key != self._native_art_key or not self._native_art_image):
+            return
+        image = self._native_art_image if key else None
+        if key != self._native_display_key or image != self._native_display_image:
+            self._native_display_revision += 1
+        self._native_display_key = key
+        self._native_display_image = image
+        self._native_display = {
+            "channel_id": channel,
+            "values": {name: getattr(self.native, name, None) for name in (
+                "media_title", "media_artist", "media_album_name", "media_content_id", "media_content_type")},
+            "programme": deepcopy(raw.get("programme")),
+            "extra": deepcopy(self.native.extra_state_attributes),
+        }
+
     @callback
     def _changed(self, event=None):
         native_key = self._native_image_key()
@@ -453,6 +494,7 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
                 self._native_art_task.cancel()
             self._native_art_key = native_key
             self._native_art_image = None
+            self._native_logo_failed_key = None
             self._image_revision += 1
             if native_key:
                 self._native_art_task = self.hass.async_create_background_task(
@@ -483,12 +525,13 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
                 self._art_task = self.hass.async_create_background_task(
                     self._load_artwork(key), "TiviMuse Remote 3 artwork"
                 )
+        self._commit_native_display()
         if self._kind == "tivimuse":
             self.artwork_source = (
                 "TiviMuse EPG logo"
-                if self._native_art_image
+                if self._native_display_image
                 else "app logo"
-                if self._app_logo()
+                if self.media_image_url == APP_ICON_URL
                 else "None"
             )
         elif not self._art_image and not self._selected_url:
@@ -526,10 +569,17 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
                 return
             if styled[0]:
                 self._native_art_image = styled
+                self._commit_native_display()
                 self._image_revision += 1
                 self.artwork_source = "TiviMuse EPG logo"
                 self.async_write_ha_state()
                 return
+
+        # A missing/broken new logo must not keep the previous channel's details forever.
+        if key == self._native_image_key():
+            self._native_logo_failed_key = key
+            self._commit_native_display()
+            self.async_write_ha_state()
 
     async def _load_artwork(self, key):
         session = async_get_clientsession(self.hass)
@@ -608,12 +658,14 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         if self._kind == "tivimuse":
             if not self.native.available:
                 return self.options.get("fallback_logo")
-            if self.native.state not in ACTIVE:
-                return APP_ICON_URL if self.native.coordinator.data.get("foreground", True) else self.options.get("fallback_logo")
-            if self._native_art_image and self._native_art_key == self._native_image_key():
-                digest = hashlib.sha256(repr(self._native_art_key).encode()).hexdigest()[:16]
-                return f"tivimuse://display/native/{digest}/{self._image_revision}"
-            return self._app_logo()
+            if self.native.coordinator.data.get("foreground") is False:
+                return self.options.get("fallback_logo")
+            if self._native_display_image:
+                digest = hashlib.sha256(repr(self._native_display_key).encode()).hexdigest()[:16]
+                return f"tivimuse://display/native/{digest}/{self._native_display_revision}"
+            if self.native.state not in ACTIVE and not self._native_display:
+                return APP_ICON_URL
+            return None
         if self._art_key == self._artwork_key():
             if self._art_image:
                 digest = hashlib.sha256(repr(self._art_key).encode()).hexdigest()[:16]
@@ -632,9 +684,7 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
             return await self.hass.async_add_executor_job(app_icon)
         if self._kind == "tivimuse":
             return (
-                self._native_art_image
-                if self._native_art_image and self._native_art_key == self._native_image_key()
-                else (None, None)
+                self._native_display_image or (None, None)
             )
         if self._art_key == self._artwork_key() and self._art_image:
             return self._art_image
