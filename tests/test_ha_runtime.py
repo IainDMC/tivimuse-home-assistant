@@ -194,3 +194,18 @@ async def test_real_media_entity_routes_exact_ids_and_unloads(hass):
         )
         command.assert_awaited_with("jump_live")
         assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_idle_foreground_uses_app_icon_and_background_clears_it(display):
+    from custom_components.tivimuse.brand_artwork import APP_ICON_URL
+
+    player, coordinator = display
+    coordinator.async_set_updated_data({**STATE, "state": "idle", "foreground": True, "channel_id": None})
+    assert player.media_image_url == APP_ICON_URL
+    data, content_type = await player.async_get_media_image()
+    assert content_type == "image/png"
+    with Image.open(BytesIO(data)) as image:
+        assert image.size == (1024, 1024)
+    coordinator.async_set_updated_data({"state": "idle", "foreground": False})
+    assert player.media_image_url is None
+    assert await player.async_get_media_image() == (None, None)

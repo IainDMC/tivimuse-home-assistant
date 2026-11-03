@@ -1,3 +1,9 @@
+## 0.5.4
+
+- Show the bundled blue TiviMuse app icon when TiviMuse is foreground but no channel is playing.
+- Keep channel logos during playback and preserve app/Shield fallbacks when switching apps or disconnecting.
+- Serve the fallback locally through Home Assistant's image proxy, with no extra guide download.
+
 # Changelog
 
 ## 0.5.3

@@ -23,6 +23,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import TiviMuseError
 from .artwork import fit_logo
+from .brand_artwork import APP_ICON_URL, app_icon
 from .combined_display import TiviMuseRemoteDisplay
 from .const import DOMAIN
 
@@ -165,6 +166,8 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
         return (
             f"tivimuse://logo/{self.media_content_id}"
             if self.media_content_id and self.coordinator.data.get("logo_available")
+            else APP_ICON_URL
+            if self.available and self.coordinator.data.get("foreground")
             else None
         )
 
@@ -213,6 +216,8 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
     async def async_get_media_image(self, width=None, height=None):
         async with self._logo_lock:
             key = self.media_image_url
+            if key == APP_ICON_URL:
+                return await self.hass.async_add_executor_job(app_icon)
             if not key:
                 self._logo_cache_key = self._logo_cache = None
                 return None, None

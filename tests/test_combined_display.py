@@ -621,3 +621,24 @@ async def test_disconnected_tivimuse_uses_shield_before_foreground_catches_up(ha
     entry.runtime_data.coordinator.async_set_update_error(DeviceUnavailable("closed"))
     await hass.async_block_till_done()
     assert hass.states.get(DISPLAY).attributes["entity_picture"] == "/local/icons/tv.png"
+
+
+async def test_foreground_idle_tivimuse_uses_bundled_app_icon_not_stale_channel(hass, combined):
+    from custom_components.tivimuse.brand_artwork import APP_ICON_URL
+
+    entry, player = combined
+    entry.runtime_data.coordinator.async_set_updated_data({
+        **NATIVE, "state": "idle", "foreground": True, "channel_id": None,
+        "logo_available": False, "programme": None,
+    })
+    await hass.async_block_till_done()
+    assert player.media_image_url == APP_ICON_URL
+    assert not hass.states.get(DISPLAY).attributes.get("media_title")
+    data, content_type = await player.async_get_media_image()
+    assert content_type == "image/png"
+    with Image.open(BytesIO(data)) as image:
+        assert image.size == (1024, 1024)
+        assert image.mode == "RGBA"
+    foreground(hass, "launcher")
+    await hass.async_block_till_done()
+    assert player.media_image_url != APP_ICON_URL

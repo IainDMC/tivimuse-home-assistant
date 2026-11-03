@@ -21,6 +21,7 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.util import dt as dt_util
 
+from .brand_artwork import APP_ICON_URL, app_icon
 from .const import DOMAIN
 from .display_artwork import (
     app_kind,
@@ -605,8 +606,10 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         if self._kind is None:
             return self._app_logo()
         if self._kind == "tivimuse":
-            if not self.native.available or self.native.state not in ACTIVE:
+            if not self.native.available:
                 return self.options.get("fallback_logo")
+            if self.native.state not in ACTIVE:
+                return APP_ICON_URL if self.native.coordinator.data.get("foreground", True) else self.options.get("fallback_logo")
             if self._native_art_image and self._native_art_key == self._native_image_key():
                 digest = hashlib.sha256(repr(self._native_art_key).encode()).hexdigest()[:16]
                 return f"tivimuse://display/native/{digest}/{self._image_revision}"
@@ -625,6 +628,8 @@ class TiviMuseRemoteDisplay(MediaPlayerEntity):
         return self.media_image_local if url and url.startswith("tivimuse://") else url or ""
 
     async def async_get_media_image(self, width=None, height=None):
+        if self.media_image_url == APP_ICON_URL:
+            return await self.hass.async_add_executor_job(app_icon)
         if self._kind == "tivimuse":
             return (
                 self._native_art_image
