@@ -1,3 +1,8 @@
+## 0.5.5
+
+- Correct the idle TiviMuse app icon to the transparent stacked tv/tivimuse wordmark.
+- Change the artwork identity so Home Assistant and Remote 3 refresh cached images.
+
 ## 0.5.4
 
 - Show the bundled blue TiviMuse app icon when TiviMuse is foreground but no channel is playing.

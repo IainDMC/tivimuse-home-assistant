@@ -3,7 +3,7 @@
 from functools import cache
 from pathlib import Path
 
-APP_ICON_URL = "tivimuse://brand/app-icon-blue-square-v1"
+APP_ICON_URL = "tivimuse://brand/app-icon-stacked-v2"
 
 
 @cache
