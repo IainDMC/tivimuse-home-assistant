@@ -72,6 +72,9 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
             "sw_version": coordinator.info.get("version"),
         }
 
+        if coordinator.info.get("web_manager_path") == "/manage":
+            self._attr_device_info["configuration_url"] = f"{coordinator.client.url}/manage"
+
     @property
     def supported_features(self):
         features = (
