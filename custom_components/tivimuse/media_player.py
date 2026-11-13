@@ -53,7 +53,7 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
     _attr_has_entity_name = True
     _attr_name = None
     _attr_app_name = "TiviMuse"
-    _attr_app_id = "app.opentv.debug"
+    _attr_app_id = "app.tivimuse"
     _attr_media_image_remotely_accessible = False
 
     def __init__(self, coordinator):
