@@ -70,6 +70,9 @@ class TiviMuseClient:
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             raise DeviceUnavailable("Cannot reach TiviMuse") from None
 
+    async def web_manager_sign_in(self):
+        return await self._request("POST", "/v1/web-manager/sign-in", payload={})
+
     async def info(self) -> dict[str, Any]:
         data = await self._request("GET", "/v1/info")
         if data.get("protocol") != 1 or not isinstance(data.get("device_id"), str):
