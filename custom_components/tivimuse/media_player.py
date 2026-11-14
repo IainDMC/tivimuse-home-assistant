@@ -18,6 +18,7 @@ from homeassistant.components.media_player import (
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
+from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -72,7 +73,16 @@ class TiviMusePlayer(CoordinatorEntity, MediaPlayerEntity):
             "sw_version": coordinator.info.get("version"),
         }
 
-        if coordinator.info.get("web_manager_path") == "/manage":
+        if coordinator.info.get("web_manager_sign_in"):
+            try:
+                base = get_url(coordinator.hass, prefer_external=False).rstrip("/")
+            except NoURLAvailableError:
+                base = None
+            if base:
+                self._attr_device_info["configuration_url"] = (
+                    f"{base}/tivimuse-settings?entry={coordinator.config_entry.entry_id}"
+                )
+        if "configuration_url" not in self._attr_device_info and coordinator.info.get("web_manager_path") == "/manage":
             self._attr_device_info["configuration_url"] = f"{coordinator.client.url}/manage"
 
     @property
